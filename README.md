@@ -15,7 +15,7 @@
   <img alt="NVIDIA RTX 20–50, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2020%E2%80%9350%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
   <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20locally-e27a4b">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Release candidate" src="https://img.shields.io/badge/version-1.0.0%20RC-orange">
+  <img alt="V1.1" src="https://img.shields.io/badge/version-V1.1-orange">
 </p>
 
 <p align="center">
@@ -83,7 +83,7 @@ Seven short steps from an empty app to your first chapter. Skip it or replay it 
 
 ## Install in four steps
 
-1. **Download** `AudioBookStudio-Setup-1.0.0.exe` from the [Releases page](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases).
+1. **Download** `AudioBookStudio-Setup-V1.1.exe` from the [Releases page](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases).
 2. **Put it in an empty folder**, for example `D:\AudioBook Studio`. The app installs in that same folder.
    Use a local disk, not Program Files or the root of a drive.
 3. **Open it and choose**:
@@ -121,8 +121,8 @@ tested physically (RTX 4080 Laptop, 12 GB); RTX 20/30/50 hardware remains untest
 [VERIFICATION.md](VERIFICATION.md) for exactly what was checked. An RTX 3060 with 12 GB qualifies for Standard;
 an RTX 2080 Ti with 11 GB qualifies only for experimental Compact. Cards with less than 8 GB are refused.
 
-**Release note:** expanded GPU targets start with `v1.0.0-rc.2`. The first published package,
-`v1.0.0-rc.1`, retains the older architecture-8.9 build.
+**Release versions:** **V1** is the initial build with the architecture-8.9 engine. **V1.1** adds the
+expanded GPU targets. Future improved releases will use **V1.2**, **V1.3** and so on.
 
 ### Standard or Compact?
 
@@ -267,7 +267,7 @@ Keep the launcher window open; closing it stops the app.
 > not been measured on an 8 GB card. Installation on a clean Windows system and full uninstallation still
 > need validation. The installer is unsigned.
 
-Version 1.0.0 remains a release candidate. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
+V1.1 is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
 and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
 If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in
 [Issues](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues). Please leave out private manuscripts,

@@ -83,3 +83,19 @@ EXE, and checks embedded resources. Model weights and downloaded vendor packages
 
 Validate the generated installer in an isolated installation. The build process does not sign files
 or upload a GitHub release. Review every distribution asset before sharing it.
+
+Public release names use **V1**, **V1.1**, **V1.2** and so on, with matching Git tags (`v1`, `v1.1`, `v1.2`).
+The initial engine build is V1; expanded GPU coverage starts with V1.1. Name the published setup
+`AudioBookStudio-Setup-V<version>.exe` (for example, `AudioBookStudio-Setup-V1.1.exe`). Renaming the
+generated EXE does not change its contents or checksum. These public release labels are separate from
+the existing internal installer format version.
+
+Publish only these four release assets:
+
+- The versioned setup EXE.
+- `AudioBookStudio-source.zip`, matching the release tag's reviewed source tree.
+- `AudioBookStudio-native-source.zip`, containing the exact native engine source and its licenses.
+- `SHA256SUMS.txt`, listing the SHA-256 of those three files with their published names.
+
+Keep documentation and license notices in the repository and archives; do not upload extra copies
+as release attachments. GitHub also adds its own source archive links automatically.
