@@ -14,11 +14,12 @@ NAME = 'Uninstall AudioBook Studio.exe'
 APP = ['app.py', 'web/index.html', 'engine/build/tts-server.exe', 'assets/voice_mean.npy', 'licenses/ggml-MIT.txt',
        'AudioBook Studio.exe', NAME]
 OWNED = ['runtime/python/python.exe', '.venv/Scripts/python.exe', 'tools/ffmpeg/ffmpeg.exe', 'tools/ollama/ollama.exe',
-         'licenses/ffmpeg/LICENSE.txt', '.downloads/cache.zip', 'install.log', 'startup.log', '__pycache__/app.cpython-312.pyc']
+         'licenses/ffmpeg/LICENSE.txt', '.downloads/cache.zip', 'install.log', 'startup.log', '__pycache__/app.cpython-312.pyc',
+         '.desktop/WebView2/Default/Preferences', '.desktop/window.json']
 MODELS = ['models/model.gguf', 'models/ollama/blobs/sha256-abc', 'models/ollama/manifests/registry.ollama.ai/library/gemma4/12b']
 DATA = ['settings.json', 'characters.json', 'volumes.json', 'voices/registry.json', 'voices/narrator.wav',
         'work/passages/a.wav', 'export/Book/1.mp3']
-FOREIGN = ['AudioBookStudio-Setup-1.0.0.exe', 'Local Models/_place models here', 'my notes.txt']
+FOREIGN = ['AudioBookStudio-Setup.exe', 'Local Models/_place models here', 'my notes.txt']
 
 
 def make_installation(root, foreign=True, payload_paths=None):
@@ -45,7 +46,8 @@ class UninstallerTests(unittest.TestCase):
         cls.setup = cls.folder / 'Setup.exe'
         subprocess.run([str(CSC), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
-                        '/reference:System.Web.Extensions.dll', '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs')],
+                        '/reference:System.Web.Extensions.dll', '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs'),
+                        str(ROOT / 'installer/DesktopRuntime.cs')],
                        check=True, capture_output=True)
 
     @classmethod
@@ -137,6 +139,21 @@ class UninstallerTests(unittest.TestCase):
         finally:
             process.kill()
             process.wait()
+
+    def test_desktop_profile_link_never_removes_another_browser_profile(self):
+        make_installation(self.root)
+        target = Path(self.work.name) / 'Other browser profile'
+        target.mkdir()
+        (target / 'Preferences').write_text('keep this browser profile')
+        import shutil
+        shutil.rmtree(self.root / '.desktop')
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(self.root / '.desktop'), str(target)],
+                       check=True, capture_output=True)
+        code, report = self.run_uninstaller()
+        self.assertEqual(code, 0, report)
+        self.assertEqual((target / 'Preferences').read_text(), 'keep this browser profile')
+        self.assertFalse((self.root / '.desktop').exists())
+        self.assertExist(DATA + FOREIGN)
 
     def test_removes_only_shortcuts_that_still_open_this_installation(self):
         make_installation(self.root)

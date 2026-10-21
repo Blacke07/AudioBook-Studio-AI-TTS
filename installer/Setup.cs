@@ -212,7 +212,7 @@ class Setup : Form {
     readonly Timer animation=new Timer { Interval=40 };
     public bool Preview;   // set by RenderPreview: no hardware checks, sample values only
     string session, lastError, currentFile, profile=DefaultProfile();
-    bool running, supplied, preparedFolder;
+    bool running, supplied, preparedFolder, runtimePreparing;
     long freeBytes=-1;
     int current=-1;
     long fileStartBytes; DateTime fileStart;
@@ -258,7 +258,7 @@ class Setup : Form {
         };
         Shown+=delegate { if(!Preview) CheckComputer(); };
         FormClosing+=delegate(object sender,FormClosingEventArgs e) {
-            if(running) {
+            if(running || runtimePreparing) {
                 MessageBox.Show(this,"Setup is still working. Wait until the current step finishes.","AudioBook Studio",MessageBoxButtons.OK,MessageBoxIcon.Information);
                 e.Cancel=true; return;
             }
@@ -410,7 +410,7 @@ class Setup : Form {
         }
     }
 
-    void OnInstall() {
+    async void OnInstall() {
         if(!supplied && local.Selected) {
             if(install.Text=="Create Local Models folder") {
                 try { Process.Start("explorer.exe",Quote(PrepareModelsFolder(root,profile))); preparedFolder=true; }
@@ -421,6 +421,11 @@ class Setup : Form {
             if(!supplied) { note.Text="No model files found in Local Models yet. Copy the listed files, then choose Check again."; return; }
             Choose(true); return;
         }
+        if(runtimePreparing) return;
+        runtimePreparing=true; install.Enabled=false;
+        try { if(!await DesktopRuntime.EnsureForSetup(this)) return; }
+        catch(Exception error) { MessageBox.Show(this,error.Message,"Microsoft WebView2 Runtime",MessageBoxButtons.OK,MessageBoxIcon.Error); return; }
+        finally { runtimePreparing=false; install.Enabled=true; }
         ShowPage(progress);
         BeginInstall();
     }
@@ -699,7 +704,7 @@ class Setup : Form {
         var text=new StringBuilder();
         text.Append(GuideHeader+"\r\n\r\n"+
                     "Model set: "+profile["label"]+". Choose the same model set in setup.\r\n\r\n"+
-                    "Run AudioBookStudio-Setup-1.0.0.exe again after copying them. Setup checks the size and SHA-256 of every\r\n"+
+                    "Run AudioBookStudio-Setup.exe again after copying them. Setup checks the size and SHA-256 of every\r\n"+
                     "file and copies them into the installation; the files you place here are left unchanged.\r\n"+
                     "All files below are needed. If one is missing or different, setup stops and explains which one.\r\n"+
                     "To let setup download everything instead, leave only this file here (or delete the folder).\r\n\r\n"+

@@ -18,7 +18,7 @@ class Uninstaller {
     const string TempPrefix="AudioBookStudio-Uninstall-";
     const string Shortcuts="shortcuts.txt";  // shortcuts setup created, one path per line
     // Folders setup creates in full; nothing of the user's is stored in them.
-    static readonly string[] OwnedTrees={"runtime",".venv",".install",".downloads","tools\\ffmpeg","tools\\ollama","licenses\\ffmpeg"};
+    static readonly string[] OwnedTrees={"runtime",".venv",".install",".downloads",".desktop","tools\\ffmpeg","tools\\ollama","licenses\\ffmpeg"};
     static readonly string[] OwnedFiles={"install.log","startup.log",Marker};
     // The user's own work. Kept unless the user explicitly asks to delete it.
     static readonly string[] DataFiles={"settings.json","characters.json","volumes.json"};
@@ -66,7 +66,7 @@ class Uninstaller {
         var manifest=Inspect();
         var running=RunningFromHere();
         if(running.Count>0)
-            throw new RunningException("Close AudioBook Studio and its control window before uninstalling.\n\nStill running from this folder: "+string.Join(", ",running));
+            throw new RunningException("Close AudioBook Studio before uninstalling.\n\nStill running from this folder: "+string.Join(", ",running));
         bool hasData=DataPaths(manifest).Any(path => File.Exists(path) || Directory.Exists(path));
         if(!quiet) {
             string question="Remove AudioBook Studio from this folder?\n\n"+root+"\n\n"+

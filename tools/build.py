@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'installer'))
 from state import check_initial
 from audit_public import audit, public_file
+from webview2 import restore as restore_webview2
+
+SETUP_NAME = 'AudioBookStudio-Setup.exe'
 
 
 def sha256(file):
@@ -30,17 +33,25 @@ def build_launcher(compiler, build):
     subprocess.run([str(icon_builder), str(assets)], check=True)
     icon = assets / 'audiobook.ico'
     output = build / 'AudioBook Studio.exe'
-    inputs = [ROOT / 'installer/AppLauncher.cs', ROOT / 'installer/WindowsJob.cs', icon, Path(__file__)]
+    sdk = restore_webview2(ROOT)
+    sources = [ROOT / 'installer' / name for name in
+               ('AppLauncher.cs', 'WindowsJob.cs', 'DesktopPolicy.cs', 'DesktopRuntime.cs', 'StudioWebView.cs')]
+    inputs = sources + [icon, Path(__file__), ROOT / 'installer/windows.manifest', ROOT / 'installer/webview2.json']
     fingerprint = {file.name: sha256(file) for file in inputs}
     stamp = build / 'launcher-build.json'
     cached = json.loads(stamp.read_text()) if stamp.exists() else {}
     if not output.exists() or cached.get('inputs') != fingerprint or cached.get('output') != sha256(output):
         subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
+                        '/reference:System.Web.Extensions.dll',
+                        '/reference:' + str(sdk / 'Microsoft.Web.WebView2.Core.dll'),
+                        '/reference:' + str(sdk / 'Microsoft.Web.WebView2.WinForms.dll'),
                         '/win32manifest:' + str(ROOT / 'installer/windows.manifest'),
                         '/win32icon:' + str(icon), '/resource:' + str(icon) + ',app.ico',
-                        '/out:' + str(output), *map(str, inputs[:2])], check=True)
+                        '/out:' + str(output), *map(str, sources)], check=True)
         stamp.write_text(json.dumps({'inputs': fingerprint, 'output': sha256(output)}, indent=2))
+    for file in sdk.glob('*.dll'):
+        shutil.copyfile(file, build / file.name)
     subprocess.run([str(output), '--check-resources'], check=True)
     return output, icon
 
@@ -68,6 +79,8 @@ def main(reuse_payload=False):
     initial_names = {item['path'] for item in state['files']} | {'volumes.json'}
     files = {}
     files['AudioBook Studio.exe'] = launcher_exe
+    for name in ('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'):
+        files[name] = build / name
     files['Uninstall AudioBook Studio.exe'] = build_uninstaller(compiler, build, icon)
     files['assets/audiobook.ico'] = icon
     for base in [ROOT / 'app', ROOT / 'build/native']:
@@ -133,7 +146,7 @@ def main(reuse_payload=False):
     # Use a BOM for consistent UTF-8 handling in Windows PowerShell 5.1.
     bootstrap = build / 'bootstrap.ps1'
     bootstrap.write_text((ROOT / 'installer/bootstrap.ps1').read_text(encoding='utf-8'), encoding='utf-8-sig')
-    output = dist / 'AudioBookStudio-Setup-1.0.0.exe'
+    output = dist / SETUP_NAME
     arguments = [str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                  '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
                  '/reference:System.Web.Extensions.dll',
@@ -142,12 +155,10 @@ def main(reuse_payload=False):
     for file, name in [(bootstrap,'bootstrap.ps1'), (ROOT / 'installer/install.py','install.py'),
                        (final_manifest,'manifest.json'), (payload,'payload.zip'), (ROOT / 'README.md','README.md')]:
         arguments.append('/resource:' + str(file) + ',' + name)
-    arguments.append(str(ROOT / 'installer/Setup.cs'))
+    arguments.extend(str(ROOT / 'installer' / name) for name in ('Setup.cs', 'DesktopRuntime.cs'))
     subprocess.run(arguments, check=True)
     subprocess.run([str(output), '--check-resources'], check=True)
     checksum = sha256(output)
-    (dist / (output.name + '.sha256')).write_text(checksum + '  ' + output.name + '\n', encoding='ascii')
-    shutil.copyfile(ROOT / 'README.md', dist / 'README.md')
     print('Created:', output, flush=True)
     print('Size:', output.stat().st_size, 'bytes; SHA-256:', checksum, flush=True)
 

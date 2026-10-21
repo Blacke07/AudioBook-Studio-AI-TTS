@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import re
+import unicodedata
 from threading import RLock
 
 from voices import CHARACTER_PROFILES, CUSTOM_POOLS, character_variants, custom_speaker, describe
@@ -24,6 +25,15 @@ def _text(value):
     return str(value).strip() if value is not None else ""
 
 
+def speaker_name(value, allow_reserved=False):
+    """Display identities live in JSON, not filesystem path components."""
+    if (not isinstance(value,str) or not value or value!=value.strip() or len(value)>1024
+            or any(unicodedata.category(char)=='Cc' for char in value)
+            or not allow_reserved and value.casefold() in ('narrator','unassigned','scene break')):
+        raise ValueError('Invalid speaker name: use 1–1024 characters, without controls or reserved roles.')
+    return value
+
+
 def normalize_row(row, index=0):
     """Validate one table row; old four-column rows (name, CustomVoice, VoiceDesign, seed) are accepted."""
     row = list(row)
@@ -37,6 +47,7 @@ def normalize_row(row, index=0):
         if any(_text(value) for value in row[1:]):
             raise ValueError(f"Enter a character name in the glossary on row {index}.")
         return None
+    speaker_name(name)
     gender = _text(gender).lower() or "unknown"
     if gender not in GENDERS:
         raise ValueError(f"{name}: gender must be male, female or unknown.")
@@ -58,9 +69,9 @@ def normalize(rows):
         checked = normalize_row(row, index)
         if checked is None:
             continue
-        if checked[0] in seen:
-            raise ValueError(f"Character {checked[0]} appears twice in the glossary.")
-        seen.add(checked[0])
+        if checked[0].casefold() in seen:
+            raise ValueError(f"Character {checked[0]} appears twice (ignoring letter case).")
+        seen.add(checked[0].casefold())
         result.append(checked)
     return result
 
@@ -87,11 +98,15 @@ def save(rows):
     return rows
 
 
-def _write(rows):
-    data = {"version": 2, "characters": [{
+def to_data(rows):
+    return {"version": 2, "characters": [{
         "name": name, "aliases": aliases_of(aliases), "gender": GENDERS[gender], "note": note, "model": model,
         "custom_voice": custom, "voice_design": design, "seed": seed,
     } for name, aliases, gender, note, model, custom, design, seed in rows]}
+
+
+def _write(rows):
+    data = to_data(rows)
     temporary = GLOSSARY_FILE.with_suffix(".tmp")
     try:
         temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -4,6 +4,7 @@ Analysis of every queued chapter happens first so Gemma loads once; then Qwen ge
 chapter. A chapter that still needs the author (lines to attribute) is skipped and reported, never guessed.
 """
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime
 import threading
 import time
@@ -13,6 +14,8 @@ import export
 import glossary
 import pipeline
 import project
+import video_jobs
+from video import VideoCancelled
 from auto_speakers import release_model
 from conversion import NotReady, render_chapter
 
@@ -21,15 +24,19 @@ class Worker:
     def __init__(self):
         self._jobs = deque()
         self._wake = threading.Condition()
+        self._transfers = 0
         self._stop = threading.Event()
         self._state = {"running": False, "log": []}
+        video_jobs.cleanup_scratch(self._log)
         threading.Thread(target=self._loop, name="audiobook-worker", daemon=True).start()
 
     # -- interface for the web server -------------------------------------------------------------
-    def submit(self, volume, stems, steps, force_analysis=False):
+    def submit(self, volume, stems, steps, force_analysis=False, automatic=False):
         with self._wake:
+            if self._transfers:
+                raise ValueError('A project transfer is in progress. Start the job after it finishes.')
             self._jobs.append({"volume": volume, "stems": list(stems), "steps": list(steps),
-                               "force": force_analysis})
+                               "force": force_analysis, "automatic": automatic})
             self._wake.notify()
         self._log(f"Queued: {volume} · {len(stems)} chapters · {', '.join(steps)}")
 
@@ -37,7 +44,7 @@ class Worker:
         with self._wake:
             self._jobs.clear()
         self._stop.set()
-        self._log("Stop requested. The current passage will finish and completed work will be kept.")
+        self._log("Stop requested. Audio stops after its current passage; video cancels. Completed work is kept.")
 
     def status(self):
         with self._wake:
@@ -47,6 +54,18 @@ class Worker:
         return state
 
     # -- internals ---------------------------------------------------------------------------------
+    @contextmanager
+    def idle_guard(self):
+        with self._wake:
+            if self._state.get("running") or self._jobs:
+                raise ValueError("Stop the queue and wait for it to finish before transferring a project.")
+            self._transfers += 1
+        try:
+            yield
+        finally:
+            with self._wake:
+                self._transfers -= 1
+
     def _log(self, message):
         line = f"{datetime.now():%H:%M:%S}  {message}"
         with self._wake:
@@ -62,6 +81,7 @@ class Worker:
                 while not self._jobs:
                     self._wake.wait()
                 job = self._jobs.popleft()
+                self._state["running"] = True
             self._stop.clear()
             self._set(running=True, volume=job["volume"], phase="", chapter="", fraction=0.0, message="",
                       started=time.time(), done=0, total=0, eta_seconds=None)
@@ -78,7 +98,9 @@ class Worker:
         volume = job["volume"]
         chapters = {chapter.stem: chapter for chapter in project.chapters(volume)}
         selected = [chapters[stem] for stem in job["stems"] if stem in chapters]
-        steps = job["steps"]
+        steps = list(job["steps"])
+        if job.get("automatic") and settings["video"]["enabled"] and "video" not in steps:
+            steps.append("video")
 
         if "analyze" in steps and settings["multi_voice"]:
             rows = glossary.load()
@@ -170,6 +192,45 @@ class Worker:
             except Exception as error:
                 self._log(f"Volume export failed: {error}")
 
+        if "video" in steps:
+            rows = glossary.load()
+            todo = []
+            for chapter in selected:
+                if self._stop.is_set():
+                    return
+                try:
+                    state, details = pipeline.status(chapter, settings, rows)
+                    if state not in ("generated", "exported"):
+                        self._log(f"Skipped video for {chapter.stem}: generate current audio first.")
+                        continue
+                    if video_jobs.video_status(chapter, settings, True)["state"] == "ready":
+                        self._log(f"Video already current: {chapter.stem}")
+                        continue
+                    todo.append((chapter, details["seconds"]))
+                except Exception as error:
+                    self._fail(chapter, "video", error)
+            durations = [seconds for _, seconds in todo]
+            self._set(phase="Creating video", total=len(todo), done=0, eta_seconds=None)
+            for index, (chapter, seconds) in enumerate(todo):
+                if self._stop.is_set():
+                    return
+                self._set(chapter=chapter.stem, done=index, fraction=index/max(1, len(todo)),
+                          message="Preparing video", eta_seconds=None)
+                factor = video_jobs.measurement(settings)
+
+                def video_progress(fraction, message):
+                    remaining = seconds*(1-fraction) + sum(durations[index+1:])
+                    self._set(fraction=(index+fraction)/max(1, len(todo)), message=message,
+                              eta_seconds=round(remaining*factor) if factor else None)
+
+                try:
+                    video_jobs.create_chapter(chapter, settings, self._stop.is_set, video_progress, self._log)
+                except VideoCancelled:
+                    self._log("Video stopped; completed chapters are kept. Queue it again to resume.")
+                    return
+                except Exception as error:
+                    self._fail(chapter, "video", error)
+
         self._log("Done." if not self._stop.is_set() else "Stopped.")
 
     def _export(self, chapter, settings):
@@ -182,5 +243,6 @@ class Worker:
 
     def _fail(self, chapter, step, error):
         chapter.work.mkdir(parents=True, exist_ok=True)
-        chapter.error_file.write_text(f"{step}: {error}", encoding="utf-8")
+        target = chapter.work/"video-error.txt" if step == "video" else chapter.error_file
+        target.write_text(f"{step}: {error}", encoding="utf-8")
         self._log(f"Error during {step} in {chapter.stem}: {error}")

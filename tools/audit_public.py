@@ -10,7 +10,7 @@ FILES = ('.gitignore', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'PRIVAC
          'VERIFICATION.md', 'requirements.txt', 'requirements.lock', 'manifest.json',
          'release-state.json', 'demo-provenance.json')
 PUBLIC_MARKDOWN = frozenset(name.casefold() for name in (
-    'README.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'VERIFICATION.md', 'docs/BUILD.md',
+    'README.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'VERIFICATION.md', 'docs/BUILD.md', 'docs/PROJECT_FORMAT.md',
     'app/web/guides/Voice Personality Guide.md', 'app/web/guides/Voice Sheet Example.md',
 ))
 
@@ -19,6 +19,11 @@ def public_file(relative):
     """Keep product documentation; exclude local notes and assistant configuration from all packages."""
     path = Path(relative)
     parts = [part.casefold() for part in path.parts]
+    if (parts and parts[0]=='app' and len(parts)>1 and parts[1] in
+            {'work','export','models','engine','tools','projects-state','projects-backup','.desktop'}):
+        return False
+    if path.suffix.casefold() in ('.abstudio','.tmp','.project-tmp'):
+        return False
     if any(part in {'.claude', '.codex', '.cursor', '.agents', '.ai', '.gemini', '.aider', '.continue',
                     '.vscode', '.idea', 'internal', 'private', 'maintainer',
                     '__pycache__', '.git'} for part in parts):

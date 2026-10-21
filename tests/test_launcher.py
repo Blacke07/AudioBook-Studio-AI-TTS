@@ -8,6 +8,8 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 CSC=Path(r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe')
+sys.path.insert(0,str(ROOT/'tools'))
+from build import build_launcher
 
 
 class LauncherTests(unittest.TestCase):
@@ -21,11 +23,7 @@ class LauncherTests(unittest.TestCase):
         subprocess.run([str(generator),str(cls.folder/'assets')],check=True)
         cls.icon=cls.folder/'assets/audiobook.ico'
         cls.launcher=cls.folder/'AudioBook Studio.exe'
-        subprocess.run([str(CSC),'/nologo','/target:winexe','/platform:x64','/codepage:65001',
-                        '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll',
-                        '/win32icon:'+str(cls.icon),'/resource:'+str(cls.icon)+',app.ico',
-                        '/out:'+str(cls.launcher),str(ROOT/'installer/AppLauncher.cs'),
-                        str(ROOT/'installer/WindowsJob.cs')],check=True,capture_output=True)
+        build_launcher(CSC,cls.folder)
 
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()

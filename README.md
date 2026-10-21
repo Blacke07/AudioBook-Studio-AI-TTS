@@ -15,11 +15,10 @@
   <img alt="NVIDIA RTX 20–50, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2020%E2%80%9350%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
   <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20locally-e27a4b">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="V1.1" src="https://img.shields.io/badge/version-V1.1-orange">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases"><b>Download</b></a> ·
+  <a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest"><b>Download</b></a> ·
   <a href="#install-in-four-steps">Install</a> ·
   <a href="#your-first-audiobook">First audiobook</a> ·
   <a href="#ready-made-voices">Voices</a> ·
@@ -39,6 +38,9 @@
 | 🎙️ **One voice per character** | Describe a voice in plain English, listen to a few takes and **fix** the one you like. That character sounds the same in every chapter. |
 | 🎧 **Ready-made voices** | Nine voices ship with the app: two narrators and seven characters. Pick one in a click and change it whenever you like. |
 | 📦 **Exports a real audiobook** | WAV or MP3 per chapter, or a whole volume as one audiobook file with chapter markers. |
+| 🎬 **Optional reading video** | Create an MP4 from existing chapter audio, with highlighted text, speaker names and scrolling context. Export YouTube chapter timestamps, too. |
+| 💾 **Project backup and transfer** | Save settings, cast, fixed voices and speaker assignments in an `.abstudio` file. Preview imports, resolve conflicts and undo an import. |
+| 🖥️ **Its own desktop window** | Launch from an EXE or shortcut, without browser tabs. Restore the existing window when launched again, and confirm before stopping active work. |
 | 🔒 **Private by design** | Text, voices and audio stay on your computer. No telemetry, no sign-in, no online voice service. |
 | 🧭 **Guided** | A short step-by-step guide opens the first time. Skip it, or reopen it anytime from **Guide**. |
 
@@ -53,7 +55,28 @@ flowchart LR
     E --> F["📦 MP3 / audiobook<br/>FFmpeg"]
 ```
 
-Everything in this chain runs on your machine. Internet is only needed once, to install.
+Everything in this chain runs on your machine. Internet is needed to download installation components
+and models. The shared Microsoft WebView2 Runtime receives Microsoft's own updates; see [privacy](PRIVACY.md).
+
+## New in the current build
+
+- **Desktop window:** native title and icon, remembered size and position, notification-area controls,
+  native Save dialogs and video previews. If the embedded browser crashes, work continues and the
+  window can be reopened without restarting the server.
+- **Reading videos:** create a chapter's MP4, batch selected chapters, or add video to automatic processing.
+  Audio is reused, video has its own status, and interrupted renders leave completed chapters intact.
+- **Project transfer:** export the parts you need, preview an import before writing anything, locate
+  missing chapter folders and keep existing voices by default. Automatic backups support Undo.
+
+The download has one stable name, **AudioBookStudio-Setup.exe**. New improvements replace the current
+release; there is no sequence of V1/V2 downloads to choose between.
+
+### The desktop window
+
+The existing interface opens in its own application window. No browser address bar, tabs or personal
+browser profile are used. Closing it checks for running or queued work before stopping the local server.
+
+![AudioBook Studio in its own desktop window](docs/screenshots/desktop.png)
 
 ## A quick tour
 
@@ -81,9 +104,80 @@ Seven short steps from an empty app to your first chapter. Skip it or replay it 
 
 ![The step-by-step guide](docs/screenshots/guide.png)
 
+## Project backup and transfer
+
+The **Project** page provides `.abstudio` import/export. Choose Settings, Cast and
+fixed voices, or Volumes and speaker assignments separately. Open/Save use native Windows dialogs.
+Preview shows additions, skipped items, settings differences and conflicts before anything is written.
+Existing voices, characters and speaker corrections are kept by default. Settings are opt-in.
+
+Missing chapter folders can be located in the preview. Scripts are skipped when the local chapter text
+or the imported row text does not match. Network/device/relative sources from packages are skipped until
+you locate an absolute local drive folder. Import creates a private backup; **Undo last import** restores the preceding state after
+confirmation and first saves a safety backup of current edits. Stop the queue before transferring.
+
+**Assignments include book text: do not share those packages publicly.** Voice-only exports contain
+references and notes, but omit scripts and real-book audition examples. They can be used as voice packs;
+review their contents first. Generated audio, models, caches and original manuscripts are never included.
+Backups/reports remain local and are excluded from public source and installer packages.
+
+See [project format and safeguards](docs/PROJECT_FORMAT.md) and [privacy](PRIVACY.md).
+Installing the application and importing a project are separate steps.
+
+![Project export, import and automatic backups](docs/screenshots/project.png)
+
+![Import preview with conservative conflict choices and a missing folder](docs/screenshots/project-preview.png)
+
+## Video (optional)
+
+Create optional video for **audio that has already been generated**.
+It highlights the current passage and speaker, with softly faded context and smooth transitions.
+Automatic video is **off by default**; manual video creation is always available for current audio.
+
+1. Open a generated chapter and choose **Create video**. Audio must be current.
+2. Use **Open video** or **Show in folder** after it finishes. Video has its own ready/outdated status.
+3. On a volume, **Create videos** processes the selection, or the whole volume when nothing is selected.
+4. In **Settings and export → Video (optional)**, enable **Also create an MP4 video** to add video after
+   audio export during **Run automatically**. Choose 1080p/720p, context, omitted tags, progress bar and footer.
+5. **Export YouTube chapter list** saves timestamps beside the videos, using their actual MP4 durations.
+   It requires current videos and assumes they will be joined in chapter order without gaps.
+
+![Optional video settings](docs/screenshots/video-settings.png)
+
+![Chapter video actions and separate status](docs/screenshots/video-chapter.png)
+
+![Volume video actions](docs/screenshots/video-volume.png)
+
+The same sequential worker handles audio and video. **Stop** cancels the current video; completed chapter
+videos stay valid and are skipped when queued again. An unfinished chapter restarts its video render.
+Valid videos are reused; changed audio, text, titles or appearance options make them outdated.
+Turning automatic video on or off preserves current videos and measured timing. Video/audio durations
+are checked against the chapter before a new MP4 replaces an old one. Videos are written atomically to
+`export/<volume>/video/`. A video failure is reported separately and does not block other chapters' audio.
+Time estimates appear only after a completed render with matching video settings. Full-volume MP4 joining
+is not included yet; the whole-volume export button continues to export audio.
+
+![Optional video layout with invented dialogue and no personal data](docs/screenshots/video.png)
+
+This is a synthetic layout preview with invented characters. Its local demonstration clip uses a test tone,
+not a spoken or cloned voice. Your own video uses the existing chapter WAV, re-encoded as AAC.
+
+The command-line renderer also remains available from the installation folder:
+
+```powershell
+.\.venv\Scripts\python.exe video.py "work\The Lantern House\001 - The Message" "export\chapter-video.mp4" --volume "The Lantern House"
+```
+
+Replace the example paths with your chapter work folder and a new MP4 filename. The work folder must contain
+`script.json`, `audio.json` and `chapter.wav`. The output is 1080p, 30 fps, H.264/AAC with BT.709 colour tags.
+Use `--start 0 --seconds 30` for a short preview, or omit them for the full chapter. Add `--hide-omitted`
+to hide speech tags omitted from the audio. Existing output files are never overwritten.
+Timing is at passage level; long passages scroll proportionally rather than tracking individual words.
+
 ## Install in four steps
 
-1. **Download** `AudioBookStudio-Setup-V1.1.exe` from the [Releases page](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases).
+1. **Download** [AudioBookStudio-Setup.exe](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe)
+   from the [current release](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest).
 2. **Put it in an empty folder**, for example `D:\AudioBook Studio`. The app installs in that same folder.
    Use a local disk, not Program Files or the root of a drive.
 3. **Open it and choose**:
@@ -93,6 +187,7 @@ Seven short steps from an empty app to your first chapter. Skip it or replay it 
      setup creates a `Local Models` folder and lists exactly what to put there.
 4. **Click Install** and wait. When it says it is ready, click **Open AudioBook Studio**.
    Setup can add a desktop and Start menu shortcut for you.
+   If Microsoft WebView2 Runtime is missing, setup asks before downloading and installing it.
 
 **Setup: welcome.** Checks your graphics card and free space.
 
@@ -121,8 +216,9 @@ tested physically (RTX 4080 Laptop, 12 GB); RTX 20/30/50 hardware remains untest
 [VERIFICATION.md](VERIFICATION.md) for exactly what was checked. An RTX 3060 with 12 GB qualifies for Standard;
 an RTX 2080 Ti with 11 GB qualifies only for experimental Compact. Cards with less than 8 GB are refused.
 
-**Release versions:** **V1** is the initial build with the architecture-8.9 engine. **V1.1** adds the
-expanded GPU targets. Future improved releases will use **V1.2**, **V1.3** and so on.
+**One current download:** the release and its four assets are replaced together when improvements are
+published. `SHA256SUMS.txt` belongs to the current files; save it with a download if you want to keep
+that exact build. Internal installer and project-file format versions are separate compatibility markers.
 
 ### Standard or Compact?
 
@@ -142,13 +238,15 @@ never guessed silently. Compact has not been measured on an 8 GB card yet, which
 <summary><b>What setup installs, and what it never touches</b></summary>
 
 Setup installs a private Python runtime and `.venv`, pinned Python packages, the native Qwen engine, FFmpeg,
-portable Ollama, four Qwen GGUF files and the exact Gemma dialogue model. Every file is checked by size and SHA-256.
+portable Ollama, four Qwen GGUF files and the exact Gemma dialogue model. Pinned downloads are checked by size and SHA-256.
 It does not need Miniconda, PyTorch or a system Python, and it does not change your system PATH or Python.
 Windows .NET Framework 4.x, PowerShell 5.1 and `tar.exe` must already be available (standard on supported Windows).
 
 The installer refuses a folder that already holds another application. A failed installation can be retried in its
 own folder after fixing the reported problem; it never silently replaces an existing app. Downloads are cached for a retry.
-The release is not code-signed yet: compare the download with `SHA256SUMS.txt`.
+The shared Microsoft WebView2 Runtime is checked separately. If missing, setup asks before downloading
+Microsoft's bootstrapper, verifies its Microsoft signature before execution and checks that the Runtime
+became available. It is kept on uninstall. The release is not code-signed yet: compare the download with `SHA256SUMS.txt`.
 </details>
 
 <details>
@@ -246,7 +344,11 @@ Check the analysis, especially in long dialogues. Voice similarity checks are a 
 <summary><b>Can I move the app to another folder or computer?</b></summary>
 
 Keep it in the folder where you installed it; its Python environment is tied to that location.
-For another place or computer, install again there and copy your own settings and voices over deliberately.
+For another place or computer, export an `.abstudio` package from **Project**, install into a new folder,
+then use **Project → Open project** there. Review the preview and explicitly choose any settings or voice
+replacements. Manuscripts are not inside the package: make them available separately and use **Locate folder**
+if their paths differ. Generated audio and models are not transferred by project export. Keep the old
+installation until you have checked the new one; setup does not overwrite an existing installation.
 </details>
 
 <details>
@@ -254,7 +356,21 @@ For another place or computer, install again there and copy your own settings an
 
 The interface opens at `http://127.0.0.1:7863/`. The voice engine uses 7864 and dialogue analysis uses Ollama on 11434.
 An Ollama that is already running is reused only if it has the exact pinned Gemma model.
-Keep the launcher window open; closing it stops the app.
+`AudioBook Studio.exe` opens its own window, using Microsoft WebView2. There are no browser tabs or
+address bar, and your normal browser profile is not used. Close the application window to stop its
+local server and owned child processes. If work is running or queued, choose **Cancel** to continue or
+**Stop and exit** to quit. A notification-area icon provides **Show window**, **Open startup log**, and
+**Stop and exit**. Starting the same installation again brings its existing window forward.
+If the embedded browser crashes, local jobs keep running. Choose **Reopen window** to restore the
+interface; choosing to exit still checks for running or queued work before stopping the server.
+
+The window remembers its size and position. Video previews open in owned application windows;
+downloads use a native Save dialog. A dedicated WebView2 profile and window placement live under
+`.desktop` inside the installation and are removed by the uninstaller. The shared Microsoft WebView2
+Runtime is kept. If it is missing, setup asks before downloading and installing it from Microsoft;
+you can instead install it yourself from [Microsoft's WebView2 page](https://developer.microsoft.com/microsoft-edge/webview2/).
+Running `app.py` directly for development still opens the normal browser.
+
 </details>
 
 ## Testing and limitations
@@ -266,8 +382,12 @@ Keep the launcher window open; closing it stops the app.
 > Compact remains experimental: its real-model memory use, speed, dialogue accuracy and voice quality have
 > not been measured on an 8 GB card. Installation on a clean Windows system and full uninstallation still
 > need validation. The installer is unsigned.
+> The missing-WebView2 download/install path, taskbar grouping on other Windows systems and closing a real
+> long generation from the desktop window remain unverified. Browser-crash recovery and busy/queued exit
+> handling were tested with a fake backend, without running models.
 
-V1.1 is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
+The current build passed **206 Python tests and 8 Node tests**, including tests run from the packaged source.
+This is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
 and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
 If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in
 [Issues](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues). Please leave out private manuscripts,

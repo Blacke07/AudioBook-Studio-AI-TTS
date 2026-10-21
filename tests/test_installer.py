@@ -134,7 +134,7 @@ class InstallerTests(unittest.TestCase):
             root=Path(folder); target=root/'target'; target.mkdir()
             script=root/'bootstrap.ps1'
             script.write_text((ROOT/'installer/bootstrap.ps1').read_text(encoding='utf-8'),encoding='utf-8-sig')
-            setup=target/'AudioBookStudio-Setup-1.0.0.exe'; setup.write_bytes(b'installer')
+            setup=target/'AudioBookStudio-Setup.exe'; setup.write_bytes(b'installer')
             arguments=['powershell.exe','-NoProfile','-File',str(script),'-Target',str(target),
                        '-InstallerPath',str(setup),'-CheckTarget']
             before={file.name:file.read_bytes() for file in target.iterdir()}

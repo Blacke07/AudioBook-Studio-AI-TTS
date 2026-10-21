@@ -12,6 +12,11 @@ runtime/
 .install/
 .studio-install-incomplete
 app/work/
+app/.desktop/
+app/projects-backup/
+app/projects-state/
+*.abstudio
+*.project-tmp
 app/export/
 app/models/
 app/engine/
@@ -31,6 +36,7 @@ app/voices/*.wav
 !/THIRD_PARTY_NOTICES.md
 !/VERIFICATION.md
 !/docs/BUILD.md
+!/docs/PROJECT_FORMAT.md
 !/app/web/guides/Voice Personality Guide.md
 !/app/web/guides/Voice Sheet Example.md
 .claude/

@@ -131,7 +131,7 @@ function renderWorker() {
       <div class="bar"><i style="width:${fraction}%"></i></div>
       <div class="now small">${s.total ? `${Math.min((s.done || 0) + 1, s.total)} of ${s.total} · ` : ""}${fraction}%${s.eta_seconds ? ` · ~${duration(s.eta_seconds)} remaining` : ""}</div>
       <div class="row"><button class="btn" id="stop">${icon("stop")} Stop</button><button class="btn ghost" id="log">${icon("list")} Log</button></div>`;
-    $("#stop").onclick = () => guard(() => api("/api/stop", { method: "POST" }).then(() => toast("Stopping after the current passage. Completed work will be kept.")));
+    $("#stop").onclick = () => guard(() => api("/api/stop", { method: "POST" }).then(() => toast("Stopping. Audio finishes its current passage; video cancels. Completed work is kept.")));
   } else {
     const last = s.log.length ? s.log[s.log.length - 1].slice(10) : "Start a job from the Volumes page.";
     box.innerHTML = `<b>No active job</b><div class="now small" title="${esc(last)}">${esc(last)}</div>
@@ -148,6 +148,7 @@ const routes = [
   [/^#\/characters$/, viewCharacters, "characters"],
   [/^#\/narrator$/, viewNarrator, "narrator"],
   [/^#\/settings$/, viewSettings, "settings"],
+  [/^#\/project$/, viewProject, "project"],
 ];
 async function route() {
   refreshOnProgress = null;
@@ -228,6 +229,7 @@ async function addVolumeDialog() {
 
 let volumeFilter = "all";
 let selected = new Set();
+const videoChip = (c) => `<span class="chip ${c.video.state === "ready" ? "ok" : c.video.state === "outdated" ? "warn" : ""}">${esc(c.video.label)}</span>`;
 async function viewVolume(name) {
   const data = await api(`/api/volumes/${encodeURIComponent(name)}`);
   const chapters = data.chapters;
@@ -264,6 +266,12 @@ async function viewVolume(name) {
         <button class="btn" id="run-export">${icon("download")} Export chapters</button>
         <button class="btn" id="run-volume">${icon("book")} Export the whole volume</button>
       </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="run-video" ${chapters.some(c => ["generated", "exported"].includes(c.state)) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create videos</button>
+        <button class="btn" id="youtube">${icon("list")} Export YouTube chapter list</button>
+      </div>
+      <p class="muted small" style="margin:10px 0 0">Videos use existing audio, ${target}. ${data.video_enabled ? "Automatic processing also creates videos after audio export." : 'Automatic video is off. Enable it in <a href="#/settings">Settings</a>.'}
+      ${data.video_enabled && data.video_factor ? `Video adds about ${duration(chapters.filter(c => c.video.state !== "ready").reduce((sum, c) => sum + (c.seconds ?? c.estimated_seconds ?? 0), 0)*data.video_factor)} (based on a completed render).` : ""}</p>
     </div>
     ${counts.needs_review ? `<div class="banner" style="margin-top:16px">${icon("flag")}<div><b>${counts.needs_review} chapters need your review.</b> Some lines have uncertain speakers. Open those chapters and choose the speaker for each highlighted line.</div></div>` : ""}
     ${counts.error ? `<div class="banner" style="margin-top:16px;background:var(--bad-soft);color:var(--bad)">${icon("info")}<div><b>${counts.error} chapters have errors.</b> See the chapter or activity log for details.</div></div>` : ""}
@@ -278,7 +286,8 @@ async function viewVolume(name) {
         <td class="dur">${c.seconds ? duration(c.seconds) : `~${duration(c.estimated_seconds)}`}</td>
         <td>${chip(c.state, c.label)}${c.state === "partial" ? `<span class="bar mini-bar"><i style="width:${c.progress * 100}%"></i></span>` : ""}
           ${c.unclear ? `<span class="chip warn" title="unassigned dialogue">${c.unclear} unassigned</span>` : ""}
-          ${c.flagged ? `<span class="chip" title="passages with unusual pacing">${icon("flag")} ${c.flagged}</span>` : ""}</td>
+          ${c.flagged ? `<span class="chip" title="passages with unusual pacing">${icon("flag")} ${c.flagged}</span>` : ""}
+          <div style="margin-top:4px">${videoChip(c)}</div>${c.video.error ? `<div class="small" style="color:var(--bad)">Video: ${esc(c.video.error)}</div>` : ""}</td>
         <td>${c.audio ? `<button class="btn ghost icon-only" data-play="${esc(c.audio)}" title="Listen">${icon("play")}</button>` : ""}</td>
       </tr>`).join("")}</tbody></table>
       ${visible.length ? "" : `<div class="empty">No chapters in this category.</div>`}
@@ -286,7 +295,8 @@ async function viewVolume(name) {
     <audio id="volume-player" controls class="hidden" style="width:100%;margin-top:14px"></audio>`;
 
   const run = (steps, button) => guard(async () => {
-    await api("/api/run", { method: "POST", body: { volume: name, stems: [...selected], steps } });
+    await api("/api/run", { method: "POST", body: { volume: name, stems: [...selected], steps,
+      automatic: steps.join(",") === "analyze,render,export" } });
     toast("Job queued. Follow progress in the lower-left panel.");
     pollNow();
   }, button);
@@ -294,6 +304,11 @@ async function viewVolume(name) {
   $("#run-analyze").onclick = (e) => run(["analyze"], e.currentTarget);
   $("#run-render").onclick = (e) => run(["render"], e.currentTarget);
   $("#run-export").onclick = (e) => run(["export"], e.currentTarget);
+  $("#run-video").onclick = (e) => run(["video"], e.currentTarget);
+  $("#youtube").onclick = (e) => guard(async () => {
+    const result = await api("/api/video/youtube", { method: "POST", body: { volume: name, stems: [...selected] } });
+    await modal("YouTube chapter list", `<p>Saved beside your chapter videos, in their volume order. These timestamps assume the videos are joined without gaps.</p><p class="muted small">YouTube has its own chapter requirements. Very short chapters may not appear as chapters on YouTube.</p><a class="btn primary" href="${esc(result.url)}" download="YouTube chapters.txt">${icon("download")} Download chapter list</a>`);
+  }, e.currentTarget);
   $("#run-volume").onclick = async (e) => {
     const ok = await modal("Export the whole volume", `<p>All generated chapters will be combined into one file with chapter markers (choose the format in <a href="#/settings">Settings</a>; M4B by default, an audiobook format with chapter support).</p><p class="muted small">Exporting a complete volume may take a few minutes.</p>`,
       [{ label: "Cancel", value: false }, { label: "Export volume", value: true, primary: true }]);
@@ -327,12 +342,15 @@ async function viewChapter(volume, stem) {
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
     <div class="page-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
       <p>${chip(c.state, c.label)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
-      ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
+      ${videoChip(c)} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
       <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${lines.length ? "Analyze again" : "Analyze"}</button>
         <button class="btn primary" id="render">${icon("play")} Generate chapter</button>
+        <button class="btn" id="create-video" ${["generated", "exported"].includes(c.state) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create video</button>
         <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button></div></div>
     ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}</div>` : ""}
     ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}
+    ${c.video.url ? `<div class="row" style="margin:10px 0 16px"><a class="btn" href="${esc(c.video.url)}" target="_blank" rel="noopener">${icon("play")} Open video</a><button class="btn" id="show-video">${icon("folder")} Show in folder</button></div>` : ""}
+    ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
     ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} lines need a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
     ${data.report ? `<details class="card" style="padding:14px 18px"><summary><b>Analysis report</b></summary><div class="log" style="margin-top:10px">${esc(data.report)}</div></details>` : ""}
     <div class="card" style="margin-top:16px">
@@ -358,6 +376,8 @@ async function viewChapter(volume, stem) {
     pollNow();
   }, button);
   $("#render").onclick = (e) => runChapter(lines.length ? ["render", "export"] : ["analyze", "render", "export"], e.currentTarget);
+  $("#create-video").onclick = (e) => runChapter(["video"], e.currentTarget);
+  $("#show-video")?.addEventListener("click", (e) => guard(() => api("/api/video/show", { method: "POST", body: { volume, stem } }), e.currentTarget));
   const analyze = async (button) => {
     if (lines.length && !await modal("Analyze again?", "<p>Your speaker assignments for this chapter will be replaced by a new analysis.</p>",
       [{ label: "Cancel", value: false }, { label: "Analyze again", value: true, primary: true }])) return;
@@ -736,6 +756,7 @@ async function viewNarrator() {
 async function viewSettings() {
   const data = await api("/api/settings");
   const s = data.settings;
+  const v = s.video;
   const formatHelp = { mp3: "Widely supported. Recommended.", m4a: "Good quality in a compact file; Apple and Android.", ogg: "Open format suited to speech.",
     opus: "Compact files with efficient speech compression.", flac: "Lossless audio; larger files.", wav: "Uncompressed audio for editing." };
   view.innerHTML = `
@@ -766,8 +787,25 @@ async function viewSettings() {
     </div>`;
   $$(".choice input").forEach((input) => input.onchange = () => $$(`.choice input[name=${input.name}]`).forEach((other) => other.closest(".choice").classList.toggle("on", other.checked)));
   $$("#quality button").forEach((b) => b.onclick = () => { $$("#quality button").forEach((x) => x.classList.toggle("on", x === b)); });
+  view.insertAdjacentHTML("beforeend", `<div class="card stack" id="video-settings" style="margin-top:18px"><h3>Video (optional)</h3>
+    <label class="switch"><input type="checkbox" id="video-enabled" ${v.enabled ? "checked" : ""}><div><b>Also create an MP4 video</b><div class="small muted">Run automatically creates videos after audio export. Off by default; manual video creation is always available.</div></div></label>
+    <div class="two-cols">
+      <label class="field"><span>Resolution</span><select id="video-resolution"><option value="1920" ${v.width === 1920 ? "selected" : ""}>1080p · 1920 × 1080</option><option value="1280" ${v.width === 1280 ? "selected" : ""}>720p · 1280 × 720</option></select></label>
+      <label class="field"><span>Optional footer</span><input id="video-footer" type="text" maxlength="200" value="${esc(v.footer)}" placeholder="Leave empty for no footer"></label>
+      <label class="field"><span>Previous passages</span><select id="video-before">${[0,1,2,3,4].map(n => `<option ${n === v.before ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      <label class="field"><span>Following passages</span><select id="video-after">${[0,1,2,3,4].map(n => `<option ${n === v.after ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    </div>
+    <label class="switch"><input type="checkbox" id="video-omitted" ${v.show_omitted ? "checked" : ""}><div>Show omitted speech tags</div></label>
+    <label class="switch"><input type="checkbox" id="video-progress" ${v.progress_bar ? "checked" : ""}><div>Show progress bar in video</div></label>
+    <p class="small muted">Uses current, generated audio. Changing appearance options makes existing videos outdated; turning automatic video on or off keeps them valid. Audio and voices are unchanged. ${data.video_factor ? `Measured render time: about ${Math.round(data.video_factor*60)} seconds per minute of audio.` : "A time estimate appears after the first completed video."}</p>
+    </div>`);
   $("#pause").oninput = (e) => $("#pause-value").textContent = e.target.value;
   $("#save").onclick = (e) => guard(async () => {
+    s.video = { ...v, enabled: $("#video-enabled").checked,
+      width: +$("#video-resolution").value, height: +$("#video-resolution").value === 1920 ? 1080 : 720,
+      before: +$("#video-before").value, after: +$("#video-after").value,
+      show_omitted: $("#video-omitted").checked, progress_bar: $("#video-progress").checked,
+      footer: $("#video-footer").value };
     s.export_format = $("input[name=format]:checked").value;
     s.export_quality = $("#quality .on").dataset.q;
     s.volume_format = $("#volume-format").value;
@@ -780,6 +818,105 @@ async function viewSettings() {
     await api("/api/settings", { method: "PUT", body: { settings: s } });
     toast("Settings saved");
   }, e.currentTarget);
+}
+
+/* ---------- project transfer ---------- */
+const PROJECT_PARTS = { settings: "Settings", cast: "Cast and fixed voices", volumes: "Volumes and speaker assignments" };
+let importPreview = null;
+async function viewProject() {
+  const history = await api("/api/project");
+  view.innerHTML = `<div class="page-head"><div><h1>Project</h1><p>Back up or move your settings, cast and speaker assignments. Everything stays on this computer.</p></div></div>
+    <div class="grid two">
+      <div class="card stack"><h2>Export project</h2><p class="muted small">Choose the parts to save in one .abstudio file. Generated chapter audio, models, caches and source manuscripts are never included.</p>
+        ${Object.entries(PROJECT_PARTS).map(([key,label]) => `<label class="switch"><input type="checkbox" data-export-part="${key}" ${key === "volumes" ? "" : "checked"}><div>${label}</div></label>`).join("")}
+        <div class="banner small" id="book-warning">This file will contain your book text if you include speaker assignments. Do not share it publicly.</div>
+        <p class="small muted">A cast-only export contains voice descriptions, reference WAVs and their transcripts. Real-book example lines are excluded; review references and notes before sharing a voice pack.</p>
+        <button class="btn primary" id="export-project">${icon("download")} Preview export…</button>
+      </div>
+      <div class="card stack"><h2>Import project</h2><p class="muted small">Open an .abstudio file. Preview additions and conflicts before anything changes. Existing characters, voices and speaker corrections are kept by default.</p>
+        <button class="btn primary" id="import-project">${icon("folder")} Open project…</button>
+        <p class="small muted">Stop the queue and wait for it to finish before transferring a project. Import creates a local backup automatically. Missing chapter folders can be located in the preview.</p>
+        <button class="btn" id="undo-project" ${history.last_import ? "" : "disabled"}>${icon("redo")} Undo last import</button>
+      </div>
+    </div><div id="import-preview"></div>
+    <div class="card" style="margin-top:18px"><h3>Automatic backups</h3><p class="muted small">Stored in projects-backup inside the app folder. These backups can include book text and personal voices; keep them private.</p>
+      ${history.backups.length ? `<div class="log">${esc(history.backups.join("\n"))}</div>` : '<p class="muted small">No imports yet.</p>'}</div>`;
+  $("#export-project").onclick = (e) => guard(async () => {
+    const parts = $$("[data-export-part]:checked").map(input => input.dataset.exportPart);
+    const result = await api("/api/project/export/preview", { method:"POST", body:{parts} });
+    if (result.cancelled) return;
+    const ok = await modal("Confirm project export", `<p>${esc(result.path)}</p><p>${result.characters} characters · ${result.voices} fixed voices · ${result.volumes} volumes · ${result.scripts} scripts · about ${(result.bytes/1024/1024).toFixed(1)} MB expanded.</p>
+      ${result.parts.includes("cast") ? '<p>Voice references, transcripts and notes may contain private material. Review them before sharing a voice pack.</p>' : ""}
+      ${result.contains_book_text ? '<div class="banner">This file will contain your book text. Do not share it publicly.</div>' : ""}
+      ${result.exists ? '<p><b>The existing project file will be replaced.</b></p>' : ""}`,
+      [{label:"Cancel",value:false},{label:result.exists ? "Replace file" : "Export project",value:true,primary:true}]);
+    if (!ok) return;
+    await api("/api/project/export/apply", {method:"POST",body:{token:result.token,confirm:true,overwrite:result.exists}});
+    toast("Project exported");
+  }, e.currentTarget);
+  $("#import-project").onclick = (e) => guard(async () => {
+    const result = await api("/api/project/import/preview", {method:"POST",body:{}});
+    if (result.cancelled) return;
+    importPreview = {...result, choices:{parts:result.summary.parts.filter(part => part !== "settings"),characters:[],voices:[],scripts:[],locations:{}}};
+    drawImportPreview();
+  }, e.currentTarget);
+  $("#undo-project").onclick = (e) => guard(async () => {
+    const preview = await api("/api/project/undo/preview",{method:"POST",body:{}});
+    const ok = await modal("Restore the state before the last import?", `<p>Restore ${esc(preview.backup)}.</p><p><b>Current settings, cast, volumes and saved assignments will be replaced by that backup, including later edits.</b> Chapter audio and original manuscripts are not changed. A safety backup of the current state is saved first.</p>`,
+      [{label:"Cancel",value:false},{label:"Restore backup",value:true,primary:true}]);
+    if (!ok) return;
+    await api("/api/project/undo/apply",{method:"POST",body:{token:preview.token,confirm:true}});
+    importPreview = null;
+    toast("Previous project state restored");
+    await viewProject();
+  }, e.currentTarget);
+  if (importPreview) drawImportPreview();
+}
+
+function drawImportPreview() {
+  const p = importPreview;
+  const choices = p.choices;
+  const names = {character:"characters", voice:"voices", script:"scripts"};
+  $("#import-preview").innerHTML = `<div class="card stack" style="margin-top:18px"><h2>Preview import</h2>
+    <p class="small muted">${esc(p.path)} · ${p.changes} files would change. Nothing has been written.</p>
+    <div class="row">${p.summary.parts.map(key => `<label class="switch"><input type="checkbox" data-import-part="${key}" ${choices.parts.includes(key) ? "checked" : ""}><div>${PROJECT_PARTS[key]}</div></label>`).join("")}</div>
+    ${p.contains_book_text ? '<div class="banner small">This project contains book text in its speaker assignments. Keep it private.</div>' : ""}
+    <div style="overflow:auto"><table class="chapters"><thead><tr><th>Part</th><th>Name</th><th>Action</th><th>Details / choice</th></tr></thead><tbody>
+      ${p.items.map(item => `<tr><td>${esc(item.kind)}</td><td>${esc(item.name)}</td><td>${esc(item.action)}</td><td>
+        ${esc(item.reason || "")}
+        ${item.source !== undefined ? `<div class="small muted">${esc(choices.locations[item.name] || item.source)}</div><button class="btn small" data-locate="${esc(item.name)}">Locate folder…</button>` : ""}
+        ${item.conflict && names[item.kind] ? `<label class="switch"><input type="checkbox" data-conflict-kind="${names[item.kind]}" data-conflict-name="${esc(item.name)}" ${(choices[names[item.kind]] || []).includes(item.name) ? "checked" : ""}><div>Use imported (otherwise keep mine)</div></label>` : ""}
+        ${item.changes && Object.keys(item.changes).length ? `<details><summary>Settings differences</summary><pre class="log">${esc(JSON.stringify(item.changes,null,2))}</pre></details>` : ""}
+      </td></tr>`).join("")}</tbody></table></div>
+    ${p.ignored.length ? `<p class="small muted">Ignored entries: ${esc(p.ignored.join(", "))}</p>` : ""}
+    <div class="row"><button class="btn" id="refresh-import">Update preview</button><button class="btn primary" id="apply-import" ${p.changes ? "" : "disabled"}>Apply this preview</button></div>
+    <p class="muted small" id="preview-note">A backup will be saved before applying. Review additions, skipped items and conflicts first.</p></div>`;
+  const refresh = async () => {
+    const result = await api("/api/project/import/preview",{method:"POST",body:{token:p.token,choices}});
+    importPreview = {...result,choices};
+    drawImportPreview();
+  };
+  const changed = () => {
+    choices.parts = $$("[data-import-part]:checked").map(input => input.dataset.importPart);
+    for (const key of Object.values(names)) choices[key] = $$(`[data-conflict-kind="${key}"]:checked`).map(input => input.dataset.conflictName);
+    $("#apply-import").disabled = true;
+    $("#preview-note").textContent = "Choices changed. Update the preview before applying.";
+  };
+  $$("[data-import-part], [data-conflict-kind]").forEach(input => input.onchange = changed);
+  $$("[data-locate]").forEach(button => button.onclick = () => guard(async () => {
+    const result = await api("/api/pick-folder",{method:"POST",body:{}});
+    if (result.path) { choices.locations[button.dataset.locate] = result.path; await refresh(); }
+  },button));
+  $("#refresh-import").onclick = (e) => guard(refresh,e.currentTarget);
+  $("#apply-import").onclick = (e) => guard(async () => {
+    const ok = await modal("Apply project import?", `<p>Apply the ${p.changes} file changes shown in this preview? A private backup will be created first.</p>`,
+      [{label:"Cancel",value:false},{label:"Apply import",value:true,primary:true}]);
+    if (!ok) return;
+    const result = await api("/api/project/import/apply",{method:"POST",body:{token:p.token,confirm:true}});
+    importPreview = null;
+    await viewProject();
+    await modal("Import completed",`<p>${esc(result.message)}</p><p class="small muted">Backup: ${esc(result.backup || "No changes")}</p><div class="log">${esc(result.items.map(item => `${item.action}: ${item.kind} ${item.name}${item.reason ? " — "+item.reason : ""}`).join("\n"))}</div>`);
+  },e.currentTarget);
 }
 
 /* ---------- start ---------- */
@@ -800,9 +937,9 @@ const GUIDE = [
   { route: "#/", title: "4. Analyze and review",
     text: "Open the volume and start the job. The app finds the dialogue and who speaks. Lines it is unsure about wait for you under <b>Needs review</b>: open the chapter and click the yellow label to choose the speaker." },
   { route: "#/settings", target: "#view .card", title: "5. Generate and export",
-    text: "Choose the export format here: MP3 for chapters, M4B for a whole volume with chapter markers. Generation runs in the background and can be stopped and resumed anytime; finished work is kept." },
+    text: "Choose the export format here: MP3 for chapters, M4B for a whole volume with chapter markers. Optional MP4 video is off by default; enable it below or use Create video on a generated chapter. Jobs run in the background; finished chapters are kept when you stop." },
   { route: "#/", target: "#guide-button", title: "You're ready",
-    text: "Start with one chapter and listen before generating a long volume. Reopen this guide anytime from <b>Guide</b>." },
+    text: "Start with one chapter and listen before generating a long volume. Use <b>Project</b> to back up or move your cast, fixed voices, settings and speaker assignments. Reopen this guide anytime from <b>Guide</b>." },
 ];
 function guideSeen() { try { return localStorage.getItem(GUIDE_KEY) === "done"; } catch { return true; } }
 function guideDone() { try { localStorage.setItem(GUIDE_KEY, "done"); } catch { /* storage unavailable: show again next time */ } }

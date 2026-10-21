@@ -4,7 +4,7 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,6 +18,10 @@ import model_profile
 import pipeline
 import presets
 import project
+import project_transfer
+from project_api import create_router
+from project_access import ProjectAccess
+import video_jobs
 import voice_check
 from conversion import CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, narrator_voice, preview_voice, speakable
 from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast
@@ -28,7 +32,10 @@ from worker import Worker
 WEB = project.ROOT / "web"
 PORT = 7863
 app = FastAPI(title="AudioBook Studio")
+project_transfer.recover()
 worker = Worker()
+project_access = ProjectAccess()
+app.include_router(create_router(worker, lambda:project_access))
 
 
 @app.exception_handler(ValueError)
@@ -68,7 +75,22 @@ async def own_page_only(request, call_next):
 
 
 def _url(path):
-    return "/api/audio?path=" + str(Path(path).resolve().relative_to(project.ROOT)).replace("\\", "/")
+    return "/api/audio?path=" + quote(Path(path).resolve().relative_to(project.ROOT).as_posix())
+
+
+@app.middleware("http")
+async def project_consistency(request, call_next):
+    # Project routes acquire their gate after native dialogs. Slow auditions are concurrent readers;
+    # only settings/cast/script/volume changes and import/Undo need exclusive access.
+    path = request.url.path
+    if (path.startswith('/api/') and not path.startswith('/api/project')
+            and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder')):
+        write = request.method in ('PUT','DELETE') or path in (
+            '/api/volumes','/api/characters/new','/api/voices/fix','/api/voices/unfix',
+            '/api/presets/apply','/api/chapter/split')
+        async with project_access.hold(write=write):
+            return await call_next(request)
+    return await call_next(request)
 
 
 # -- overview, volumes, chapters ---------------------------------------------------------------------
@@ -78,6 +100,12 @@ def _chapter_info(chapter, settings, rows):
             "label": pipeline.STATES[state], **details}
     if chapter.audio_file.exists():
         info["audio"] = _url(chapter.audio_file)
+    try:
+        info["video"] = video_jobs.video_status(chapter, settings, state in ("generated", "exported"))
+    except (ValueError, OSError) as error:
+        info["video"] = {"state": "outdated", "label": "Video outdated", "error": str(error)}
+    if "file" in info["video"]:
+        info["video"]["url"] = _url(info["video"].pop("file"))
     return info
 
 
@@ -139,14 +167,17 @@ def volume(name: str):
     settings = project.load_settings()
     rows = glossary.load()
     return {"volume": project.get_volume(name), "render_factor": pipeline.render_factor(),
+            "video_factor": video_jobs.measurement(settings), "video_enabled": settings["video"]["enabled"],
             "chapters": [_chapter_info(chapter, settings, rows) for chapter in project.chapters(name)]}
 
 
 @app.post("/api/run")
 def run(data: dict = Body(...)):
+    steps = data.get("steps", ["analyze", "render", "export"])
+    if not isinstance(steps, list) or not steps or set(steps) - {"analyze", "render", "export", "volume", "video"}:
+        raise ValueError("Unknown queue steps.")
     stems = data.get("stems") or [chapter.stem for chapter in project.chapters(data["volume"])]
-    worker.submit(data["volume"], stems, data.get("steps", ["analyze", "render", "export"]),
-                  bool(data.get("force")))
+    worker.submit(data["volume"], stems, steps, bool(data.get("force")), bool(data.get("automatic")))
     return worker.status()
 
 
@@ -404,7 +435,8 @@ def get_settings():
     return {"settings": project.load_settings(), "formats": export.formats(), "ffmpeg": export.available(),
             "profiles": PROFILES, "custom_speakers": CUSTOM_SPEAKERS, "author_delivery": AUTHOR_DELIVERY,
             "preview_text": fixed_voices.sample_for(NARRATOR) or PREVIEW_TEXT, "fixed": _fixed_info(NARRATOR),
-            "model_profile": {key: model_profile.CURRENT[key] for key in ("name", "label", "gemma")}}
+            "model_profile": {key: model_profile.CURRENT[key] for key in ("name", "label", "gemma")},
+            "video_factor": video_jobs.measurement(project.load_settings())}
 
 
 @app.put("/api/settings")
@@ -438,6 +470,23 @@ def narrator_preview(data: dict = Body(...)):
 
 
 # -- files ----------------------------------------------------------------------------------------------
+@app.post("/api/video/youtube")
+def youtube_list(data: dict = Body(...)):
+    target = video_jobs.youtube_chapters(data["volume"], data.get("stems"), project.load_settings())
+    return {"url": _url(target), "file": target.name}
+
+
+@app.post("/api/video/show")
+def show_video(data: dict = Body(...)):
+    import subprocess
+    chapter = project.get_chapter(data["volume"], data["stem"])
+    target = video_jobs.video_path(chapter)
+    if not target.is_file():
+        raise ValueError("No video exists for this chapter.")
+    subprocess.Popen(["explorer.exe", "/select,", str(target)], creationflags=subprocess.CREATE_NO_WINDOW)
+    return {"ok": True}
+
+
 @app.get("/api/audio")
 def audio(path: str):
     target = (project.ROOT / path).resolve()

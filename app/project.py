@@ -10,6 +10,7 @@ Layout (all inside the app folder; the author's chapter files are only read):
 """
 import hashlib
 import json
+import ntpath
 import re
 from pathlib import Path
 
@@ -60,24 +61,30 @@ def write_json(path, data):
 
 
 def load_settings():
+    from dataclasses import asdict
+    from video import VideoSettings
     from voices import AUTHOR_DELIVERY, PROFILES
     saved = _read_json(SETTINGS_FILE, {})
     settings = {**DEFAULT_SETTINGS, **saved, "narrator": {**DEFAULT_SETTINGS["narrator"], **saved.get("narrator", {})}}
     narrator = settings["narrator"]
     narrator["description"] = narrator["description"] or PROFILES.get(narrator["profile"], "")
     narrator["instructions"] = narrator["instructions"] or AUTHOR_DELIVERY
+    settings["video"] = asdict(VideoSettings.from_dict(saved.get("video", {})))
     return settings
 
 
 def save_settings(settings):
+    from dataclasses import asdict
+    from video import VideoSettings
     clean = {**DEFAULT_SETTINGS, **settings}
     clean["narrator"] = {**DEFAULT_SETTINGS["narrator"], **settings.get("narrator", {})}
+    clean["video"] = asdict(VideoSettings.from_dict(settings.get("video", {})))
     write_json(SETTINGS_FILE, clean)
     return load_settings()
 
 
-def safe_name(name):
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", str(name)).strip(" .")[:90]
+def safe_name(name, limit=90):
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", str(name)).strip(" .")[:limit]
     if not name:
         raise ValueError("Name cannot be empty.")
     return name
@@ -95,7 +102,10 @@ def get_volume(name):
 
 
 def add_volume(name, source):
-    source = Path(str(source).strip().strip('"'))
+    source = str(source).strip().strip('"')
+    if not is_local_source(source):
+        raise ValueError('Choose an absolute local drive path for the chapter folder.')
+    source = Path(source)
     if not source.is_dir():
         raise ValueError(f"Folder does not exist: {source}")
     if not chapter_files(source):
@@ -176,10 +186,21 @@ class Chapter:
 
 def chapters(volume_name):
     volume = get_volume(volume_name)
+    if not is_local_source(volume['source']):
+        raise ValueError('The volume requires an absolute local drive path. Locate its chapter folder again.')
     source = Path(volume["source"])
     if not source.is_dir():
         raise ValueError(f"The volume folder is no longer available: {source}")
     return [Chapter(volume_name, path) for path in chapter_files(source)]
+
+
+def is_local_source(source):
+    """Syntax check only: never resolve or probe a path supplied by an imported project."""
+    if not isinstance(source, str) or any(ord(char)<32 for char in source):
+        return False
+    drive, tail = ntpath.splitdrive(source)
+    return bool(re.fullmatch('[A-Za-z]:', drive) and tail.startswith(('\\','/'))
+                and not tail.startswith(('\\\\','//')) and ':' not in tail)
 
 
 def get_chapter(volume_name, stem):

@@ -18,7 +18,8 @@ class LocalModelsTests(unittest.TestCase):
         subprocess.run([str(CSC), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
                         '/reference:System.Web.Extensions.dll', '/resource:' + str(ROOT / 'manifest.json') + ',manifest.json',
-                        '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs')], check=True, capture_output=True)
+                        '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs'),
+                        str(ROOT / 'installer/DesktopRuntime.cs')], check=True, capture_output=True)
 
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
