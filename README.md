@@ -57,20 +57,29 @@ Everything in this chain runs on your machine. Internet is only needed once, to 
 
 ## A quick tour
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/volume.png" alt="A volume with its chapters"><br>
-      <b>Your volume.</b> Chapters, estimated length and status. One button runs everything: analyze, generate, export.</td>
-    <td width="50%"><img src="docs/screenshots/narrator.png" alt="Ready-made narrator voices"><br>
-      <b>The narrator.</b> A warm narrator is fixed from the start. Listen to the alternatives or describe your own.</td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/presets.png" alt="Choosing a preset voice for a character"><br>
-      <b>Voices for your cast.</b> Give any character a ready-made voice, or design a new one and fix your favorite take.</td>
-    <td width="50%"><img src="docs/screenshots/guide.png" alt="The step-by-step guide"><br>
-      <b>The guide.</b> Seven short steps from an empty app to your first chapter. Skip it or replay it anytime.</td>
-  </tr>
-</table>
+### Your volume
+
+Chapters, estimated length and status. One button runs everything: analyze, generate, export.
+
+![A volume with its chapters](docs/screenshots/volume.png)
+
+### The narrator
+
+A warm narrator is fixed from the start. Listen to the alternatives or describe your own.
+
+![Ready-made narrator voices](docs/screenshots/narrator.png)
+
+### Voices for your cast
+
+Give any character a ready-made voice, or design a new one and fix your favorite take.
+
+![Choosing a preset voice for a character](docs/screenshots/presets.png)
+
+### The guide
+
+Seven short steps from an empty app to your first chapter. Skip it or replay it anytime.
+
+![The step-by-step guide](docs/screenshots/guide.png)
 
 ## Install in four steps
 
@@ -85,13 +94,17 @@ Everything in this chain runs on your machine. Internet is only needed once, to 
 4. **Click Install** and wait. When it says it is ready, click **Open AudioBook Studio**.
    Setup can add a desktop and Start menu shortcut for you.
 
-<table>
-  <tr>
-    <td width="33%"><img src="docs/screenshots/setup-welcome.png" alt="Setup: welcome"><br><sub>Checks your graphics card and free space.</sub></td>
-    <td width="33%"><img src="docs/screenshots/setup-progress.png" alt="Setup: progress"><br><sub>Step-by-step progress with time left.</sub></td>
-    <td width="33%"><img src="docs/screenshots/setup-finish.png" alt="Setup: finished"><br><sub>Open the app and add shortcuts.</sub></td>
-  </tr>
-</table>
+**Setup: welcome.** Checks your graphics card and free space.
+
+![Setup: welcome](docs/screenshots/setup-welcome.png)
+
+**Setup: progress.** Step-by-step progress with time left.
+
+![Setup: progress](docs/screenshots/setup-progress.png)
+
+**Setup: finished.** Open the app and add shortcuts.
+
+![Setup: finished](docs/screenshots/setup-finish.png)
 
 ### What you need
 
@@ -244,12 +257,21 @@ An Ollama that is already running is reused only if it has the exact pinned Gemm
 Keep the launcher window open; closing it stops the app.
 </details>
 
-## Status
+## Testing and limitations
 
-**Version 1.0.0 is a release candidate.** It was tested on one Windows computer with an NVIDIA RTX 4080 Laptop (12 GB).
-A clean Windows installation on other hardware, other graphics cards, the Compact model set with real models and
-code signing have not been tested yet.
-[VERIFICATION.md](VERIFICATION.md) lists every check that was run and its limits.
+> [!NOTE]
+> This is a personal project, tested on one Windows computer with an NVIDIA RTX 4080 Laptop (12 GB).
+> Automated checks and local audio tests have passed, but they do not guarantee that every feature will work
+> on every computer. RTX 20/30/50 cards are included as build targets and have not been tested on physical hardware.
+> Compact remains experimental: its real-model memory use, speed, dialogue accuracy and voice quality have
+> not been measured on an 8 GB card. Installation on a clean Windows system and full uninstallation still
+> need validation. The installer is unsigned.
+
+Version 1.0.0 remains a release candidate. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
+and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
+If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in
+[Issues](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues). Please leave out private manuscripts,
+personal audio and other sensitive information.
 
 ## For developers
 
@@ -258,6 +280,10 @@ Models, downloaded runtimes, build output and user data are not stored in Git.
 See [docs/BUILD.md](docs/BUILD.md) for a repeatable Windows build.
 Each release includes the exact native engine source in `AudioBookStudio-native-source.zip`.
 
+Everyone is welcome to try the build, fork the repository and customize it to suit their own workflow.
+You are welcome to share your improvements, too. Please keep the MIT license notice and respect the
+separate licenses of the models and third-party components when redistributing your version.
+
 ## License and credits
 
 The app's own code is [MIT-licensed](LICENSE). Models and third-party components keep their own licenses:
@@ -265,3 +291,6 @@ Qwen3-TTS and Gemma 4 (Apache-2.0), the native engine (MIT), NVIDIA CUDA terms a
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/` before redistributing anything.
 
 Use only texts and reference voices you have the right to use. The app does not grant rights to source material.
+
+<sub>This build was developed and tested with assistance from Opus 5.5 and GPT 6.1-Sol. Errors may remain;
+AI-assisted development and automated tests do not replace independent testing.</sub>
