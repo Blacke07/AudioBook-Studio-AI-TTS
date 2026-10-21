@@ -1,14 +1,15 @@
 # Compatibility and validation
 
 AudioBook Studio runs locally on Windows 10/11 x64 with an AVX2-capable CPU and an NVIDIA GPU.
-The native engine targets CUDA architecture 8.9, with PTX for driver JIT. NVIDIA driver 570.65 or newer is required.
+The native engine contains CUDA targets 7.5, 8.0, 8.6, 8.9 and 12.0. The Blackwell target is specialized
+as 120a by the native build. NVIDIA driver 570.65 or newer is required.
 
 | Model set | VRAM | Status |
 | --- | --- | --- |
 | Standard | At least 12 GB | Tested on RTX 4080 Laptop, 12 GB |
 | Compact | At least 8 GB | Experimental; real-model measurements are pending |
 
-Earlier GPU architectures are not supported by this version. Other physical GPUs have not been tested.
+Other GPU targets are compiled into the engine, but have not been tested on physical RTX 20/30/50 cards.
 See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) for architecture mappings.
 
 ## Checks performed
@@ -16,8 +17,9 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 - Application, installer, uninstaller, archive validation and UI helper tests.
 - Local server Host/Origin restrictions, model hashes, safe archive extraction and process ownership.
 - Native Base fixed-voice, Voice Design and CustomVoice synthesis on RTX 4080 Laptop.
+- Regression samples from the expanded GPU build matched the previous engine's WAV files byte for byte.
 - CPU and CUDA speaker encoders returned finite 2048-dimensional vectors with matching results.
-- The 145 audited CUDA fatbinary blocks contain native images and PTX at 8.9.
+- Each of the 145 audited CUDA fatbinary blocks contains all five native targets and PTX at 7.5.
 - Installer resources, embedded payload, public source contents and distribution SHA-256 checksums.
 
 To run the source tests and reproduce a Windows build, see [docs/BUILD.md](docs/BUILD.md).

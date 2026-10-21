@@ -25,6 +25,12 @@ The pinned engine commit and build settings are in `native/upstream.json`. The r
 source archive includes ggml and the custom `spk-batch` tool. The additional CMake target links qwen-core
 and ggml backends. Source and MIT notices accompany the binary release.
 
+`manifest.json` is the single source for the CUDA targets and minimum driver (`hardware`). The helper
+reads that policy: native targets 75, 80, 86, 89 and 120, with PTX at 75. The pinned ggml CMake code
+specializes 120 to `120a-real` for Blackwell instructions. The installer and setup window use the same
+manifest list for eligibility; an unlisted compute capability is refused instead of assumed compatible.
+Compiling these targets does not replace physical tests on the corresponding cards.
+
 To reuse the exact engine from a verified release, start with an empty `build/native` directory:
 
 ```powershell

@@ -204,14 +204,34 @@ class InstallerTests(unittest.TestCase):
     def test_graphics_card_limits_follow_the_model_set(self):
         manifest=json.loads((ROOT/'manifest.json').read_text())
         standard,compact=manifest['profiles']['standard'],manifest['profiles']['compact']
-        core.check_hardware(standard,'RTX 4080',' 8.9','12282','617.42')
-        core.check_hardware(compact,'RTX 4060','8.9','8188','617.42')
+        policy=manifest['hardware']
+        core.check_hardware(standard,'RTX 4080',' 8.9','12282','617.42',policy)
+        core.check_hardware(compact,'RTX 4060','8.9','8188','617.42',policy)
         with self.assertRaisesRegex(RuntimeError,'Standard model set requires at least 12 GB'):
-            core.check_hardware(standard,'RTX 4060','8.9','8188','617.42')
+            core.check_hardware(standard,'RTX 4060','8.9','8188','617.42',policy)
         with self.assertRaisesRegex(RuntimeError,'Compact model set requires at least 8 GB'):
-            core.check_hardware(compact,'RTX 4050','8.9','6141','617.42')
+            core.check_hardware(compact,'RTX 4050','8.9','6141','617.42',policy)
         with self.assertRaisesRegex(RuntimeError,'compute capability'):
-            core.check_hardware(compact,'RTX 3060','8.6','12288','617.42')
+            core.check_hardware(compact,'GTX 1080','6.1','8192','617.42',policy)
+
+    def test_older_and_newer_rtx_architectures_keep_memory_and_driver_requirements(self):
+        manifest=json.loads((ROOT/'manifest.json').read_text())
+        policy=manifest['hardware']
+        standard,compact=manifest['profiles']['standard'],manifest['profiles']['compact']
+        for name,capability,memory in (('RTX 2080 Ti','7.5','11264'),('RTX 3060','8.6','12288'),
+                                       ('RTX 4060','8.9','8188'),('RTX 5090','12.0','32768')):
+            with self.subTest(name=name):
+                core.check_hardware(compact,name,capability,memory,'617.42',policy)
+                if int(memory)>=standard['min_vram_mb']:
+                    core.check_hardware(standard,name,capability,memory,'617.42',policy)
+                else:
+                    with self.assertRaisesRegex(RuntimeError,'12 GB'):
+                        core.check_hardware(standard,name,capability,memory,'617.42',policy)
+                with self.assertRaisesRegex(RuntimeError,'driver'):
+                    core.check_hardware(compact,name,capability,memory,'570.64',policy)
+        with self.assertRaisesRegex(RuntimeError,'8 GB'):
+            core.check_hardware(compact,'RTX 2060','7.5','6144','617.42',policy)
+        core.check_hardware(standard,'RTX 3060','8.6','12288',policy['min_driver'],policy)
 
     def test_dialogue_model_names_cannot_leave_the_models_folder(self):
         self.assertEqual(core.ollama_location('gemma4:e4b-it-qat'),('gemma4','e4b-it-qat'))

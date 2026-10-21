@@ -438,9 +438,7 @@ class Setup : Form {
                 var invariant=System.Globalization.CultureInfo.InvariantCulture;
                 double capability=double.Parse(parts[1].Trim(),invariant);
                 memory=double.Parse(parts[2].Trim(),invariant);
-                string[] driver=parts[3].Trim().Split('.');
-                bool driverOk=int.Parse(driver[0])>570 || (int.Parse(driver[0])==570 && int.Parse(driver[1])>=65);
-                ok=capability>=8.9 && memory>=MinVram("compact") && driverOk;
+                ok=SupportsGpu(capability,memory,parts[3].Trim());
                 text=parts[0].Trim().Replace("NVIDIA ","")+" · "+Math.Round(memory/1024)+" GB"+(ok?"":" (not supported by this build)");
                 if(!ok) memory=-1;
             } catch(Exception) { text="No supported NVIDIA graphics card found"; ok=false; }
@@ -733,6 +731,12 @@ class Setup : Form {
     }
 
     static string DefaultProfile() { return (string)Manifest()["default_profile"]; }
+    static Dictionary<string,object> Hardware() { return (Dictionary<string,object>)Manifest()["hardware"]; }
+    internal static bool SupportsGpu(double capability,double memory,string driver) {
+        return ((object[])Hardware()["cuda_architectures"]).Any(value => Convert.ToDouble(value)/10==capability) &&
+               memory>=MinVram("compact") &&
+               new Version(driver)>=new Version((string)Hardware()["min_driver"]);
+    }
     static Dictionary<string,object> Profile(string name) { return (Dictionary<string,object>)((Dictionary<string,object>)Manifest()["profiles"])[name]; }
     static double MinVram(string name) { return Convert.ToDouble(Profile(name)["min_vram_mb"]); }
     static string[] ProfileFiles(string name) { var profile=Profile(name); return ProfileKeys.Select(key => (string)profile[key]).Distinct().ToArray(); }

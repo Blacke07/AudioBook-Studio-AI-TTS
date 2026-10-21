@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
-  <img alt="NVIDIA RTX 40, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2040%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
+  <img alt="NVIDIA RTX 20–50, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2020%E2%80%9350%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
   <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20locally-e27a4b">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="Release candidate" src="https://img.shields.io/badge/version-1.0.0%20RC-orange">
@@ -98,12 +98,18 @@ Everything in this chain runs on your machine. Internet is only needed once, to 
 | | Minimum for this version |
 | --- | --- |
 | System | Windows 10 or 11, 64-bit, CPU with AVX2 |
-| Graphics card | NVIDIA RTX 40 series or newer (CUDA compute capability 8.9+), driver 570.65 or newer.<br>**Standard: 12 GB VRAM.** Compact (experimental): 8 GB VRAM |
+| Graphics card | NVIDIA RTX 20, 30, 40 or 50 series, driver 570.65 or newer.<br>**Standard: 12 GB VRAM.** Compact (experimental): 8 GB VRAM. See the hardware verification limits below. |
 | Disk | Standard: **40 GB free** (models about 24 GB). Compact: **25 GB free** (models about 12 GB) |
 | Memory | 32 GB RAM recommended |
 | Internet | Only for the first installation |
 
-Only one machine has been tested so far (RTX 4080 Laptop, 12 GB). See [VERIFICATION.md](VERIFICATION.md) for exactly what was checked.
+The native engine is compiled for CUDA architectures 7.5, 8.0, 8.6, 8.9 and 12.0. Only one machine has been
+tested physically (RTX 4080 Laptop, 12 GB); RTX 20/30/50 hardware remains untested. See
+[VERIFICATION.md](VERIFICATION.md) for exactly what was checked. An RTX 3060 with 12 GB qualifies for Standard;
+an RTX 2080 Ti with 11 GB qualifies only for experimental Compact. Cards with less than 8 GB are refused.
+
+**Release note:** expanded GPU targets start with `v1.0.0-rc.2`. The first published package,
+`v1.0.0-rc.1`, retains the older architecture-8.9 build.
 
 ### Standard or Compact?
 
@@ -205,9 +211,9 @@ The download cache in `%LOCALAPPDATA%/AudioBookStudio-Installer` can be deleted 
 <details>
 <summary><b>Does it work without an NVIDIA graphics card, or with less than 12 GB?</b></summary>
 
-The voice engine needs an NVIDIA RTX 40 series card (or newer). With 8 GB of video memory, choose the
+The voice engine is built for NVIDIA RTX 20, 30, 40 and 50 series cards. With 8 GB of video memory, choose the
 **Compact** model set during setup; it is experimental until it has been measured on an 8 GB card.
-Other GPU brands and older NVIDIA generations are not supported by this build.
+Other GPU brands and CUDA architectures not listed above are not accepted by this build.
 </details>
 
 <details>

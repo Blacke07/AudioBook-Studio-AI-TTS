@@ -7,6 +7,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
+$hardware = (Get-Content -LiteralPath (Join-Path $project 'manifest.json') -Raw | ConvertFrom-Json).hardware
+$architectures = @($hardware.cuda_architectures)
+if ($architectures.Count -eq 0 -or $hardware.ptx_architecture -notin $architectures) {
+    throw 'The manifest must specify native CUDA architectures and one matching PTX architecture.'
+}
+$targets = @($architectures | ForEach-Object {
+    if ([string]$_ -notmatch '^[1-9][0-9]{1,2}$' -or $_ -lt 75) { throw 'Invalid CUDA architecture in manifest.json.' }
+    if ($_ -eq $hardware.ptx_architecture) { [string]$_ } else { "$_-real" }
+}) -join ';'
 $work = [IO.Path]::GetFullPath($Workspace)
 if (Test-Path -LiteralPath $work) { throw 'Choose a new empty build workspace. Existing builds will not be overwritten.' }
 foreach ($file in @($SourceArchive, (Join-Path $CudaRoot 'bin\nvcc.exe'), $VcVars)) {
@@ -23,7 +32,7 @@ $lines = @(
     "call `"$VcVars`" -vcvars_ver=14.29",
     'if errorlevel 1 exit /b 1',
     "set `"PATH=$cuda\bin;%PATH%`"",
-    "`"$CMake`" -S `"$source`" -B `"$work\build`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=`"$cuda\bin\nvcc.exe`" -DCMAKE_CUDA_ARCHITECTURES=89 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_AVX512=OFF",
+    "`"$CMake`" -S `"$source`" -B `"$work\build`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=`"$cuda\bin\nvcc.exe`" `"-DCMAKE_CUDA_ARCHITECTURES=$targets`" -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_AVX512=OFF",
     'if errorlevel 1 exit /b 1',
     "`"$CMake`" --build `"$work\build`" --config Release --target tts-server spk-batch -j 2"
 )

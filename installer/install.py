@@ -117,7 +117,7 @@ def resolve(manifest, name):
     return resolved
 
 
-def hardware(profile):
+def hardware(profile, policy):
     smi = shutil.which('nvidia-smi') or str(Path(os.environ['SystemRoot']) / 'System32/nvidia-smi.exe')
     try:
         result = subprocess.run([smi, '--query-gpu=name,compute_cap,memory.total,driver_version',
@@ -127,20 +127,21 @@ def hardware(profile):
         raise RuntimeError('An NVIDIA GPU and driver are required. Install the driver from nvidia.com.') from error
     first = result.stdout.splitlines()[0].split(',')
     name, capability, memory, driver = [part.strip() for part in first]
-    check_hardware(profile, name, capability, memory, driver)
+    check_hardware(profile, name, capability, memory, driver, policy)
     print('GPU: ' + name + '; driver ' + driver, flush=True)
 
 
-def check_hardware(profile, name, capability, memory, driver):
-    # The preserved binary has CUDA arch 89. Do not claim it supports earlier GPUs.
-    if float(capability) < 8.9:
-        raise RuntimeError(f'{name}: this engine requires CUDA compute capability 8.9 or later. '
-                           'A separate native build is required for this GPU.')
+def check_hardware(profile, name, capability, memory, driver, policy):
+    supported = [architecture / 10 for architecture in policy['cuda_architectures']]
+    if float(capability) not in supported:
+        choices = ', '.join(f'{value:.1f}' for value in supported)
+        raise RuntimeError(f'{name}: unsupported CUDA compute capability {capability}. '
+                           f'This engine is built for {choices}.')
     if int(float(memory)) < profile['min_vram_mb']:
         gigabytes = round(profile['min_vram_mb'] / 1000)
         raise RuntimeError(f'{name}: the {profile["label"]} model set requires at least {gigabytes} GB of VRAM.')
-    if tuple(map(int, driver.split('.')[:2])) < (570, 65):
-        raise RuntimeError('Update the NVIDIA driver to version 570.65 or later for CUDA 12.8.')
+    if tuple(map(int, driver.split('.')[:2])) < tuple(map(int, policy['min_driver'].split('.'))):
+        raise RuntimeError('Update the NVIDIA driver to version ' + policy['min_driver'] + ' or later for CUDA 12.8.')
 
 
 def copy_checked(source, target, item):
@@ -170,7 +171,7 @@ def install(args):
     manifest = resolve(source, profile_name)
     profile = source['profiles'][profile_name]
     print('Model set: ' + profile['label'], flush=True)
-    hardware(profile)
+    hardware(profile, manifest['hardware'])
     if shutil.disk_usage(root).free < profile['min_free_gib'] * 1024**3:
         raise RuntimeError(f'At least {profile["min_free_gib"]} GiB of free space is required for installation, '
                            'caches and models.')
