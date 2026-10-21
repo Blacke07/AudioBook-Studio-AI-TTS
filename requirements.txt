@@ -1,0 +1,8 @@
+# Direct runtime dependencies. Install requirements.lock for the pinned Windows release.
+fastapi==0.141.1
+uvicorn==0.52.4
+numpy==2.5.3
+soundfile==0.14.0
+librosa==1.0.0
+psutil==7.2.2
+

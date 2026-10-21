@@ -1,0 +1,16 @@
+{
+  "Narrator": {
+    "id": "fix-282fd13024",
+    "file": "narrator-282fd13024.wav",
+    "text": "The evening light fell across the quiet garden, and for a while nothing moved. He waited by the gate, listening for footsteps on the other side. When they came at last, they were slower than he remembered, and he understood, before the latch lifted, that the news would not be good.",
+    "seconds": 18.62,
+    "origin": {
+      "preset": "narrator-warm",
+      "source": "Synthetic VoiceDesign take approved as the default narrator",
+      "seed": 35,
+      "temperature": 0.4,
+      "model_sha256": "b32c8571977f47c95313a32fe08d0fe5681f6c1fffac53d2b9c73a4cd7f6ee90"
+    },
+    "date": "2026-10-21"
+  }
+}

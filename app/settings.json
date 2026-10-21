@@ -1,0 +1,20 @@
+{
+  "narrator": {
+    "mode": "VoiceDesign",
+    "speaker": "Ryan",
+    "profile": "Narrator — mature American, understated",
+    "description": "A male audiobook narrator around forty years old, speaking clear, natural American English. A warm, grounded middle-low register with a mature, lightly textured timbre. Slightly sober and reflective, with balanced, restrained expressiveness and natural sentence melody. The voice feels human and engaged rather than theatrical or flat.",
+    "instructions": "Read literary prose with measured but flowing pacing and clear American English. Use subtle changes in emphasis and pitch to follow the meaning, with enough emotion to keep the story alive. Keep the delivery slightly sober, understated and conversational. Let the ends of sentences settle naturally. Do not perform an exaggerated announcer voice.",
+    "seed": 42,
+    "temperature": 0.55
+  },
+  "multi_voice": true,
+  "dialogue_pause": 0.6,
+  "announce_titles": true,
+  "speech_tags": "omit_fixed",
+  "unclear_policy": "wait",
+  "export_format": "mp3",
+  "export_quality": "standard",
+  "volume_format": "m4b",
+  "author": ""
+}

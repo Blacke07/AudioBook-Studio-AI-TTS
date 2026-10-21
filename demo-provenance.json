@@ -1,0 +1,50 @@
+{
+  "synthetic_demo": true,
+  "calibration_samples": 19,
+  "embedding_dimensions": 2048,
+  "narrator": {
+    "file": "narrator-282fd13024.wav",
+    "text": "The evening light fell across the quiet garden, and for a while nothing moved. He waited by the gate, listening for footsteps on the other side. When they came at last, they were slower than he remembered, and he understood, before the latch lifted, that the news would not be good.",
+    "sha256": "3db4bb5152bdc9dca328df2cb7a7e597180ddedab72bf267af25e171a1d5620f"
+  },
+  "calibration_sha256": "92d992feab7db8b81325a38f50052b9386fb1d0fea2e39a2e8eeffd283b6c650",
+  "presets": [
+    {
+      "file": "narrator-warm.wav",
+      "sha256": "3db4bb5152bdc9dca328df2cb7a7e597180ddedab72bf267af25e171a1d5620f"
+    },
+    {
+      "file": "narrator-clear.wav",
+      "sha256": "f6b30925dabdb4bfaa8801772be98d70bc63938ad7383898db250efb3db5b1fa"
+    },
+    {
+      "file": "man-dry-understated.wav",
+      "sha256": "befb6235dad65773cc37944f7a6eec5e7d5c1465893490dd298aed5e4c752a32"
+    },
+    {
+      "file": "man-gravelly-deadpan.wav",
+      "sha256": "97010bafa57158704012b41920e6df59337a3e5bbe7dff0870550dc043c27419"
+    },
+    {
+      "file": "woman-precise-ironic.wav",
+      "sha256": "e715b0a891d4745bae355cb524ad2be6bf02f6c4168183f92b25616de4393664"
+    },
+    {
+      "file": "woman-husky-blunt.wav",
+      "sha256": "535585d79c7cfa44b59de7f658e3b99666bfcb2291fa4543102a0d7d447ec587"
+    },
+    {
+      "file": "man-smooth-guarded.wav",
+      "sha256": "f20038e470ea7fa3239e3c59db3222291051b5ec0d69a1003ca27719ea6aab49"
+    },
+    {
+      "file": "woman-shy-gentle.wav",
+      "sha256": "f71b0e84a080510248d67d69642aeb4e7e4b8a521cb915ae18e973148e3afce5"
+    },
+    {
+      "file": "man-hoarse-gloomy.wav",
+      "sha256": "1badd975c4cd7cac9ccd885d1547c774e4da5405b96049ce9e22e665afffb333"
+    }
+  ],
+  "note": "All voices are synthetic Qwen3-TTS VoiceDesign takes; none is a recording of a real person. The calibration vector was computed from 19 separately generated synthetic samples."
+}

@@ -1,0 +1,28 @@
+{
+  "files": [
+    {
+      "path": "characters.json",
+      "sha256": "ac7cdf64fed879e7b75f378a6c72ec8545ddcb2f07daebd3415862dd99a0f597"
+    },
+    {
+      "path": "settings.json",
+      "sha256": "1b1bcd27316f168fbca1a6f00a31d2f127a9a0f767ee55ff59994eeb5a6d378e"
+    },
+    {
+      "path": "voices/narrator-282fd13024.wav",
+      "sha256": "3db4bb5152bdc9dca328df2cb7a7e597180ddedab72bf267af25e171a1d5620f"
+    },
+    {
+      "path": "voices/registry.json",
+      "sha256": "3c42338fdba409027cbd3a48a98f941d503ce25f3e9ee8e93c15abd22c831de4"
+    },
+    {
+      "path": "voices/samples.json",
+      "sha256": "c0786d3889e951484599ae864cc8e688dcdb31e09cb2dfb750942a88a300f03d"
+    },
+    {
+      "path": "volumes.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ]
+}
