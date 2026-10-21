@@ -67,6 +67,8 @@ and models. The shared Microsoft WebView2 Runtime receives Microsoft's own updat
   Audio is reused, video has its own status, and interrupted renders leave completed chapters intact.
 - **Project transfer:** export the parts you need, preview an import before writing anything, locate
   missing chapter folders and keep existing voices by default. Automatic backups support Undo.
+- **Local model installation:** verified files staged in `Local Models` are moved into `models` on the
+  same disk, so installation does not duplicate the model set. Extra files are left in staging.
 
 The download has one stable name, **AudioBookStudio-Setup.exe**. New improvements replace the current
 release; there is no sequence of V1/V2 downloads to choose between.
@@ -79,6 +81,9 @@ browser profile are used. Closing it checks for running or queued work before st
 ![AudioBook Studio in its own desktop window](docs/screenshots/desktop.png)
 
 ## A quick tour
+
+App screenshots use invented story text and public synthetic voices. Setup screenshots show sample
+states rendered by the current installer; they are not evidence of a clean-machine installation.
 
 ### Your volume
 
@@ -190,10 +195,11 @@ Timing is at passage level; long passages scroll proportionally rather than trac
    If Microsoft WebView2 Runtime is missing, setup asks before downloading and installing it.
 
 **Setup: welcome.** Checks your graphics card and free space.
+The screenshot shows models already supplied in `Local Models`.
 
 ![Setup: welcome](docs/screenshots/setup-welcome.png)
 
-**Setup: progress.** Step-by-step progress with time left.
+**Setup: progress.** Step-by-step progress while checking the supplied models. Time estimates appear when available.
 
 ![Setup: progress](docs/screenshots/setup-progress.png)
 
@@ -260,8 +266,11 @@ SHA-256 and download link. Switching the model set in setup updates that list.
 - Put the exact pinned Gemma blobs in `Local Models/ollama/blobs/`
   (an existing Ollama keeps them in `%USERPROFILE%\.ollama\models\blobs`).
 
-Then click **Check again** and **Install**. Setup copies and verifies the files and leaves your originals unchanged.
-It is all or nothing: a missing or different file stops the installation with a clear message. A `Local Models` folder
+Then click **Check again** and **Install**. Setup checks the size and SHA-256, then moves the verified files
+from `Local Models` into `models` on the same disk. It does not make a second copy of the model set.
+`Local Models` is a staging folder: keep reusable backups elsewhere. Unknown or unused files are left there.
+A missing or different file stops installation with a clear message. Models already moved remain in
+`models`; retry continues from verified files rather than copying them again. A `Local Models` folder
 that holds only the list means automatic download. Python, its packages, FFmpeg and Ollama still download automatically.
 `python tools/model_list.py standard` (or `compact`) prints the same list.
 </details>
@@ -386,7 +395,7 @@ Running `app.py` directly for development still opens the normal browser.
 > long generation from the desktop window remain unverified. Browser-crash recovery and busy/queued exit
 > handling were tested with a fake backend, without running models.
 
-The current build passed **206 Python tests and 8 Node tests**, including tests run from the packaged source.
+The current build passed **212 Python tests and 8 Node tests**, including tests run from the packaged source.
 This is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
 and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
 If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in

@@ -24,6 +24,16 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 
 To run the source tests and reproduce a Windows build, see [docs/BUILD.md](docs/BUILD.md).
 
+## Installation-local model staging
+
+The current packaged source passes 212 Python tests (138 application + 74 distribution) and 8 Node tests.
+Six added installer regressions cover moving verified Qwen files and Gemma blobs from `Local Models`
+into `models`, retaining the same filesystem file identity without copying model data, retry after an
+interrupted transfer, invalid bytes/destination conflicts, junction refusal and preservation of extras.
+An explicitly external model library is copied and left unchanged. Post-move verification failures
+retain the moved file and report its location. Tests use small invented model bytes and fake runtime
+setup/verification; they do not constitute another real-model or clean-Windows installation test.
+
 ## Optional video renderer
 
 The current build includes video settings, chapter/volume actions, cache status and an optional video
@@ -105,7 +115,8 @@ address bar. Direct Python development startup still uses the normal browser. Th
 modifies the audio pipeline nor changes approved initial settings or synthetic reference voices.
 
 - Before this change: 192 Python tests (138 application + 54 distribution) and 8 Node tests passed.
-- With the desktop host and review corrections: 206 Python tests (138 application + 68 distribution) and 8 Node tests pass.
+- Desktop integration and review corrections passed 206 Python tests (138 application + 68 distribution)
+  and 8 Node tests; the six model-staging tests above bring the current total to 212 Python tests.
 - Thirteen desktop tests use the actual native host and WebView2 with invented HTML and a fake backend:
   origin/profile/identity decisions, tampered SDK rejection, Microsoft signature checking, idle exit,
   running/queued work cancellation and confirmation, unavailable status, host crash, second-instance

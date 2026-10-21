@@ -394,7 +394,7 @@ class Setup : Form {
         if(supplied) useLocal=true;
         download.Selected=!useLocal; local.Selected=useLocal; download.Enabled=!supplied;
         if(supplied) {
-            note.Text="Model files were found in Local Models. Setup checks every file before using it. "+
+            note.Text="Model files were found in Local Models. Verified files are moved into models, without an extra copy. "+
                       "To download instead, remove them from that folder.";
             install.Text="Install";
         } else if(!useLocal) {
@@ -521,7 +521,7 @@ class Setup : Form {
             if(name.StartsWith("qwen-")) Advance(3);
             Activity("Downloading "+Friendly(name),-1,"Starting…");
         } else if(text.StartsWith("Checking local model: ")) {
-            Advance(3); currentFile=null; Activity("Checking and copying "+Friendly(text.Substring(22)),-1,"Large files take a few minutes");
+            Advance(3); currentFile=null; Activity("Checking "+Friendly(text.Substring(22)),-1,"Verified Local Models files are moved without an extra copy");
         } else if(text.StartsWith("Checking SHA-256: ")) {
             string name=text.Substring(18); currentFile=null;
             if(name.StartsWith("qwen-")) Advance(3);
@@ -705,7 +705,8 @@ class Setup : Form {
         text.Append(GuideHeader+"\r\n\r\n"+
                     "Model set: "+profile["label"]+". Choose the same model set in setup.\r\n\r\n"+
                     "Run AudioBookStudio-Setup.exe again after copying them. Setup checks the size and SHA-256 of every\r\n"+
-                    "file and copies them into the installation; the files you place here are left unchanged.\r\n"+
+                    "file, then moves verified files into models without creating another copy.\r\n"+
+                    "Local Models is a staging folder; keep any reusable backup outside the installation.\r\n"+
                     "All files below are needed. If one is missing or different, setup stops and explains which one.\r\n"+
                     "To let setup download everything instead, leave only this file here (or delete the folder).\r\n\r\n"+
                     "1. Qwen TTS models - put these "+files.Length+" files directly in this folder, with exactly these names:\r\n\r\n");
@@ -773,10 +774,11 @@ class Setup : Form {
             form.gpu.Text="GeForce RTX 4060 Laptop GPU · 8 GB";
             form.standardCard.Enabled=false; form.standardCard.Detail="Needs a 12 GB graphics card. This computer has 8 GB.";
             form.ChooseProfile("compact"); Save(form.welcome,output,"3b-welcome-compact.png");
+            form.ChooseProfile("standard");
             form.ShowPage(form.progress);
             form.Advance(3); form.currentFile="qwen-talker-1.7b-voicedesign-F32.gguf";
-            form.Activity("Downloading the Voice Design model",-1,"");
-            form.ShowBytes(3277,7317); form.amount.Text="3.2 GB of 7.1 GB · about 6 minutes left";
+            form.Activity("Checking Voice Design model",-1,"Verified Local Models files are moved without an extra copy");
+            form.amount.Visible=false;
             Save(form.progress,output,"4-progress.png");
             form.log.AppendText("Using models in the Local Models subfolder. All files will be verified.\r\nChecking local model: qwen-talker-1.7b-voicedesign-F32.gguf\r\n");
             form.lastError="A different file already exists at the destination: models\\qwen-talker-1.7b-voicedesign-F32.gguf";

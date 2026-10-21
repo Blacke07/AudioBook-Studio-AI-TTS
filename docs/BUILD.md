@@ -140,6 +140,13 @@ python tools/export_native_source.py --source C:\AudioBookStudioBuild\source\eng
 
 ## Demo and release build
 
+`Local Models` under the installation root is a staging directory: selected, hash-verified model files
+are renamed individually into `models`, on the same disk. Extra files and the instruction file remain.
+The installer does not rename the entire directory or silently adopt unselected files. A retry accepts
+already verified destinations and continues with remaining files. Linked staging/destination paths are
+refused for moves. An external library passed explicitly with `--manual-models` is copied instead, so
+the installer does not consume a shared library. Tests use invented small files; no model downloads.
+
 The checked-in narrator WAV and calibration are newly generated synthetic public assets. Do not replace
 them with personal reference recordings. `demo-provenance.json` and `release-state.json` lock their hashes.
 To intentionally create a different demo, use `tools/make_demo.py --models-dir ...` with the pinned models,

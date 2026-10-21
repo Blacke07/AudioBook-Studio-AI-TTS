@@ -25,7 +25,7 @@ def matches(path, item):
 
 
 def download(item, cache):
-    """Resume owned downloads; a manual source is never modified or deleted."""
+    """Resume owned downloads and verify their pinned bytes."""
     target = Path(cache) / item['name']
     if target.exists():
         if matches(target, item):
@@ -144,15 +144,24 @@ def check_hardware(profile, name, capability, memory, driver, policy):
         raise RuntimeError('Update the NVIDIA driver to version ' + policy['min_driver'] + ' or later for CUDA 12.8.')
 
 
-def copy_checked(source, target, item):
-    if not matches(source, item):
-        raise RuntimeError('Selected file does not match the pinned model: ' + str(source))
-    target = Path(target)
+def import_model(source, target, item, staging=None):
+    """Consume installation-local staging files by rename; preserve external model libraries."""
+    source, target = Path(source), Path(target)
     if target.exists():
         if not matches(target, item):
             raise RuntimeError('A different file already exists at the destination: ' + str(target))
         return
+    if not matches(source, item):
+        raise RuntimeError('Selected file does not match the pinned model: ' + str(source))
+    move = staging is not None and source.absolute().is_relative_to(Path(staging).absolute())
+    if move and (source.resolve() != source.absolute() or target.resolve() != target.absolute()):
+        raise RuntimeError('Local Models staging and destination must not use links: ' + str(source))
     target.parent.mkdir(parents=True, exist_ok=True)
+    if move:
+        source.rename(target)  # Same installation/disk: preserve the file instead of duplicating gigabytes.
+        if not matches(target, item):
+            raise RuntimeError('Moved model failed verification; file retained at: ' + str(target))
+        return
     temporary = target.with_name(target.name + '.install-part')
     shutil.copyfile(source, temporary)
     if not matches(temporary, item):
@@ -222,7 +231,7 @@ def install(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             source.replace(target)
         else:
-            copy_checked(source, target, item)
+            import_model(source, target, item, staging=root / 'Local Models')
     print('Preparing the pinned Gemma dialogue model...', flush=True)
     ollama_models = root / 'models/ollama'
     repository, version = ollama_location(manifest['gemma']['tag'])
@@ -239,7 +248,7 @@ def install(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             source.replace(target)
         else:
-            copy_checked(source, target, record)
+            import_model(source, target, record, staging=root / 'Local Models')
     gemma_manifest = ollama_models / 'manifests/registry.ollama.ai/library' / repository / version
     gemma_manifest.parent.mkdir(parents=True, exist_ok=True)
     gemma_manifest.write_bytes(bytes.fromhex(manifest['gemma']['content_hex']))

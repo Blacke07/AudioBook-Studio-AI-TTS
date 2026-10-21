@@ -26,7 +26,7 @@ try {
     }
     if (Test-Path -LiteralPath $installRoot) {
         if (-not (Test-Path -LiteralPath $sessionMarker)) {
-            $releaseFiles = @('AudioBookStudio-Setup-1.0.0.exe', 'AudioBookStudio-Setup-1.0.0.exe.sha256',
+            $releaseFiles = @('AudioBookStudio-Setup.exe',
                 'AudioBookStudio-source.zip', 'AudioBookStudio-native-source.zip', 'README.md', 'VERIFICATION.md',
                 'SHA256SUMS.txt', 'THIRD_PARTY_NOTICES.md', 'PRIVACY.md', 'LICENSE')
             foreach ($entry in Get-ChildItem -LiteralPath $installRoot -Force) {

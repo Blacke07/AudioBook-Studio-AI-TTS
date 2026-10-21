@@ -51,11 +51,125 @@ class InstallerTests(unittest.TestCase):
             source, target = Path(folder) / 'source', Path(folder) / 'target'
             source.write_bytes(b'correct')
             item = {'size':7,'sha256':hashlib.sha256(b'correct').hexdigest()}
-            core.copy_checked(source, target, item)
+            core.import_model(source, target, item)
             self.assertEqual(source.read_bytes(), b'correct')
             self.assertEqual(target.read_bytes(), b'correct')
             target.write_bytes(b'incorrect')
-            with self.assertRaises(RuntimeError): core.copy_checked(source, target, item)
+            with self.assertRaises(RuntimeError): core.import_model(source, target, item)
+
+    def test_local_models_move_without_copying_and_retry_keeps_the_same_file(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder); staging=root/'Local Models'; staging.mkdir()
+            (staging/'my notes.txt').write_bytes(b'keep me')
+            item={'size':7,'sha256':hashlib.sha256(b'correct').hexdigest()}
+            for name in ('model.gguf','ollama/blobs/sha256-example'):
+                source=staging/name; source.parent.mkdir(parents=True,exist_ok=True); source.write_bytes(b'correct')
+                target=root/'models'/name; identity=source.stat().st_ino
+                with patch.object(core.shutil,'copyfile',side_effect=AssertionError('Model data was copied')):
+                    core.import_model(source,target,item,staging=staging)
+                    core.import_model(source,target,item,staging=staging)  # Resume after the move already finished.
+                self.assertFalse(source.exists())
+                self.assertEqual(target.stat().st_ino,identity)
+                self.assertEqual(target.read_bytes(),b'correct')
+            self.assertEqual((staging/'my notes.txt').read_bytes(),b'keep me')
+
+    def test_external_model_library_is_copied_even_with_installation_staging_enabled(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'library/model.gguf'; source.parent.mkdir(); source.write_bytes(b'correct')
+            target=root/'app/models/model.gguf'; item={'size':7,'sha256':hashlib.sha256(b'correct').hexdigest()}
+            core.import_model(source,target,item,staging=root/'app/Local Models')
+            self.assertEqual(source.read_bytes(),b'correct')
+            self.assertEqual(target.read_bytes(),b'correct')
+            self.assertNotEqual(source.stat().st_ino,target.stat().st_ino)
+
+    def test_bad_staged_models_or_destination_conflicts_never_consume_source(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder); staging=root/'Local Models'; staging.mkdir()
+            source=staging/'model.gguf'; target=root/'models/model.gguf'
+            item={'size':7,'sha256':hashlib.sha256(b'correct').hexdigest()}
+            source.write_bytes(b'invalid')
+            with self.assertRaisesRegex(RuntimeError,'pinned model'): core.import_model(source,target,item,staging)
+            self.assertEqual(source.read_bytes(),b'invalid'); self.assertFalse(target.exists())
+            source.write_bytes(b'correct'); target.parent.mkdir(); target.write_bytes(b'unknown')
+            with self.assertRaisesRegex(RuntimeError,'different file'): core.import_model(source,target,item,staging)
+            self.assertEqual(source.read_bytes(),b'correct'); self.assertEqual(target.read_bytes(),b'unknown')
+
+    def test_staged_junction_is_refused_without_moving_external_data(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder); staging=root/'Local Models'; staging.mkdir()
+            external=root/'external'; external.mkdir(); (external/'model.gguf').write_bytes(b'correct')
+            junction=staging/'ollama'
+            subprocess.run(['cmd','/c','mklink','/J',str(junction),str(external)],check=True,capture_output=True)
+            try:
+                item={'size':7,'sha256':hashlib.sha256(b'correct').hexdigest()}
+                with self.assertRaisesRegex(RuntimeError,'must not use links'):
+                    core.import_model(junction/'model.gguf',root/'models/model.gguf',item,staging)
+                self.assertEqual((external/'model.gguf').read_bytes(),b'correct')
+                self.assertFalse((root/'models').exists())
+            finally: junction.rmdir()
+
+    def test_failed_post_move_check_keeps_file_and_reports_its_location(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder); staging=root/'Local Models'; staging.mkdir()
+            source=staging/'model.gguf'; source.write_bytes(b'correct'); target=root/'models/model.gguf'
+            with patch.object(core,'matches',side_effect=[True,False]):
+                with self.assertRaisesRegex(RuntimeError,'file retained at'):
+                    core.import_model(source,target,{},staging)
+            self.assertEqual(target.read_bytes(),b'correct'); self.assertFalse(source.exists())
+
+    def test_install_moves_both_model_families_and_resumes_after_partial_transfer(self):
+        from argparse import Namespace
+        with TemporaryDirectory() as folder:
+            root=Path(folder); staging=root/'Local Models'; staging.mkdir()
+            marker=root/'.studio-install-incomplete'; marker.write_text('AudioBookStudio-Installer-1')
+            manifest=json.loads((ROOT/'manifest.json').read_text()); name=manifest['default_profile']
+            wanted={manifest['profiles'][name][key] for key in core.PROFILE_FILES}
+            expected={}
+            for item in manifest['models']:
+                if item['name'] not in wanted: continue
+                content=('Qwen '+item['name']).encode(); item.update(size=len(content),sha256=hashlib.sha256(content).hexdigest())
+                expected[item['name']]=content
+            gemma=manifest['gemma_models'][manifest['profiles'][name]['gemma']]
+            for index,item in enumerate(gemma['blobs']):
+                content=('Gemma '+str(index)).encode(); item.update(size=len(content),digest='sha256:'+hashlib.sha256(content).hexdigest())
+                expected['ollama/blobs/'+item['digest'].replace(':','-')]=content
+            identities={}
+            for relative,content in expected.items():
+                source=staging/relative; source.parent.mkdir(parents=True,exist_ok=True); source.write_bytes(content)
+                identities[relative]=source.stat().st_ino
+            (staging/'my notes.txt').write_text('preserve')
+            payload=root/'payload.zip'; ffmpeg=root/'ffmpeg.zip'; ollama=root/'ollama.zip'
+            for archive,entries in [(payload,{'app.py':b'# synthetic fixture'}),
+                                     (ffmpeg,{'ffmpeg/bin/ffmpeg.exe':b'fake','ffmpeg/bin/ffprobe.exe':b'fake'}),
+                                     (ollama,{'ollama.exe':b'fake'})]:
+                with zipfile.ZipFile(archive,'w') as bundle:
+                    for path,content in entries.items(): bundle.writestr(path,content)
+            manifest['payload']={'size':payload.stat().st_size,'sha256':core.sha256(payload)}
+            spec=root/'manifest.json'; spec.write_text(json.dumps(manifest))
+            args=Namespace(target=root,bundle=payload,manifest=spec,cache=root/'cache',manual_models=staging,profile=name)
+            downloads={manifest['ffmpeg']['name']:ffmpeg,manifest['ollama']['name']:ollama}
+            original=core.import_model; calls=0
+            def interrupted(*values,**options):
+                nonlocal calls
+                calls+=1
+                if calls==2: raise RuntimeError('simulated interruption')
+                return original(*values,**options)
+            with patch.object(core,'hardware'),patch.object(core,'run'),\
+                    patch.object(core.shutil,'disk_usage',return_value=Namespace(free=10**15)),\
+                    patch.object(core,'download',side_effect=lambda item,cache:downloads[item['name']]),\
+                    redirect_stdout(io.StringIO()):
+                with patch.object(core,'import_model',side_effect=interrupted):
+                    with self.assertRaisesRegex(RuntimeError,'simulated interruption'): core.install(args)
+                self.assertTrue(marker.exists())
+                self.assertEqual(sum(not (staging/name).exists() for name in expected),1)
+                core.install(args)
+            self.assertFalse(marker.exists())
+            for relative,content in expected.items():
+                self.assertFalse((staging/relative).exists(),relative)
+                target=root/'models'/relative
+                self.assertEqual(target.read_bytes(),content)
+                self.assertEqual(target.stat().st_ino,identities[relative])
+            self.assertEqual((staging/'my notes.txt').read_text(),'preserve')
 
     def test_zip_cannot_write_outside_installation(self):
         with TemporaryDirectory() as folder:
