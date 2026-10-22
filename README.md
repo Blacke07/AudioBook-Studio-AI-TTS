@@ -70,9 +70,6 @@ and models. The shared Microsoft WebView2 Runtime receives Microsoft's own updat
 - **Local model installation:** verified files staged in `Local Models` are moved into `models` on the
   same disk, so installation does not duplicate the model set. Extra files are left in staging.
 
-The download has one stable name, **AudioBookStudio-Setup.exe**. New improvements replace the current
-release; there is no sequence of V1/V2 downloads to choose between.
-
 ### The desktop window
 
 The existing interface opens in its own application window. No browser address bar, tabs or personal
