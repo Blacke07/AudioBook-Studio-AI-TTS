@@ -1,5 +1,7 @@
 # AudioBook Studio
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-D97745?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://buymeacoffee.com/4reign)
+
 Turn English TXT or DOCX chapters into an audiobook on your Windows computer. Use a narrator, fixed character voices, and optional videos with synchronized reading text.
 
 **[Download the current installer](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe)** · [All downloads](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest) · [Report a problem](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues)
