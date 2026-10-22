@@ -23,19 +23,25 @@ from project_api import create_router
 from project_access import ProjectAccess
 import video_jobs
 import voice_check
+import voice_rules
+import spoken_text
+from voice_rules_api import create_router as voice_rules_router
 from conversion import CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, narrator_voice, preview_voice, speakable
 from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast
 from voices import (AUTHOR_DELIVERY, BASE_CLONE, CHARACTER_PROFILES, CUSTOM_SPEAKERS, MODEL_NAMES, PROFILES,
                     describe, voice_parameters)
 from worker import Worker
 
-WEB = project.ROOT / "web"
+WEB = project.PROGRAM / "web"
 PORT = 7863
 app = FastAPI(title="AudioBook Studio")
 project_transfer.recover()
 worker = Worker()
 project_access = ProjectAccess()
 app.include_router(create_router(worker, lambda:project_access))
+app.include_router(voice_rules_router(worker))
+from character_registry_api import create_router as registry_router
+app.include_router(registry_router(worker))
 
 
 @app.exception_handler(ValueError)
@@ -75,7 +81,7 @@ async def own_page_only(request, call_next):
 
 
 def _url(path):
-    return "/api/audio?path=" + quote(Path(path).resolve().relative_to(project.ROOT).as_posix())
+    return "/api/audio?path=" + quote(project.media_token(path))
 
 
 @app.middleware("http")
@@ -84,7 +90,7 @@ async def project_consistency(request, call_next):
     # only settings/cast/script/volume changes and import/Undo need exclusive access.
     path = request.url.path
     if (path.startswith('/api/') and not path.startswith('/api/project')
-            and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder')):
+            and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder','/api/video/codecs')):
         write = request.method in ('PUT','DELETE') or path in (
             '/api/volumes','/api/characters/new','/api/voices/fix','/api/voices/unfix',
             '/api/presets/apply','/api/chapter/split')
@@ -97,7 +103,7 @@ async def project_consistency(request, call_next):
 def _chapter_info(chapter, settings, rows):
     state, details = pipeline.status(chapter, settings, rows)
     info = {"stem": chapter.stem, "number": chapter.number, "title": chapter.title, "state": state,
-            "label": pipeline.STATES[state], **details}
+            "label": pipeline.STATES[state], **details, **pipeline.readiness(state, details)}
     if chapter.audio_file.exists():
         info["audio"] = _url(chapter.audio_file)
     try:
@@ -133,13 +139,22 @@ def overview():
 
 @app.post("/api/volumes")
 def add_volume(data: dict = Body(...)):
-    return {"name": project.add_volume(data.get("name"), data["source"])}
+    with worker.idle_guard("adding a volume"):
+        return {"name": project.add_volume(data.get("name"), data["source"])}
 
 
 @app.delete("/api/volumes/{name}")
 def remove_volume(name: str):
-    project.remove_volume(name)
+    with worker.idle_guard("removing a volume"):
+        project.get_volume(name)
+        project.remove_volume(name)
     return {"ok": True}
+
+
+@app.put("/api/volumes/{name}")
+def edit_volume(name: str, data: dict = Body(...)):
+    with worker.idle_guard("editing a volume"):
+        return {"name":project.update_volume(name, data["source"])}
 
 
 @app.post("/api/pick-folder")
@@ -176,7 +191,17 @@ def run(data: dict = Body(...)):
     steps = data.get("steps", ["analyze", "render", "export"])
     if not isinstance(steps, list) or not steps or set(steps) - {"analyze", "render", "export", "volume", "video"}:
         raise ValueError("Unknown queue steps.")
-    stems = data.get("stems") or [chapter.stem for chapter in project.chapters(data["volume"])]
+    chapters = project.chapters(data["volume"])
+    stems = data.get("stems") or [chapter.stem for chapter in chapters]
+    if not isinstance(stems, list) or not all(isinstance(stem, str) for stem in stems) or len(set(stems)) != len(stems):
+        raise ValueError("Select a valid chapter batch.")
+    selected = [chapter for chapter in chapters if chapter.stem in stems]
+    if not selected or len(selected) != len(stems):
+        raise ValueError("The requested chapters no longer exist. Refresh the volume.")
+    if "render" in steps and "analyze" not in steps:
+        pipeline.require_ready(selected, project.load_settings(), "render")
+    if any(step in steps for step in ("export", "video", "volume")) and not {"analyze", "render"}.intersection(steps):
+        pipeline.require_ready(chapters if "volume" in steps else selected, project.load_settings(), "export")
     worker.submit(data["volume"], stems, steps, bool(data.get("force")), bool(data.get("automatic")))
     return worker.status()
 
@@ -199,7 +224,10 @@ def chapter(volume: str, stem: str):
     item = project.get_chapter(volume, stem)
     info = _chapter_info(item, settings, rows)
     script = item.script()
-    meta = project._read_json(item.audio_meta, None) or {}
+    manual_draft = script is None or script["source_hash"] != project.text_hash(item.text())
+    if manual_draft:
+        script = pipeline.manual_script(item, rows)
+    meta = {} if manual_draft else project._read_json(item.audio_meta, None) or {}
     takes = {}
     for passage in meta.get("passages", []):
         takes.setdefault(passage["line"], []).append(passage)
@@ -209,9 +237,19 @@ def chapter(volume: str, stem: str):
     except ValueError:
         spoken = None
     lines = []
+    try:
+        reading = voice_rules.effective(script, rows)
+        voice_error = ""
+    except ValueError as error:
+        reading, voice_error = {}, str(error)
+    try:
+        spoken_edits=spoken_text.effective(script)
+        spoken_error=""
+    except ValueError as error:
+        spoken_edits={}; spoken_error=str(error)
     if script:
         for index, row in enumerate(script["rows"]):
-            line = {"speaker": row[0], "text": row[1], "joined": bool(row[2]),
+            line = {"speaker": row[0], "read_as":reading.get(index,row[0]), "text": row[1], "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
                     "variant": int(row[3]) if len(row) > 3 else 0,
                     "flagged": index in meta.get("flagged_lines", []),
                     "omitted": spoken is not None and row[0] == NARRATOR and index not in spoken
@@ -220,18 +258,24 @@ def chapter(volume: str, stem: str):
                 line["start"] = takes[index][0]["start"]
                 line["seconds"] = round(sum(take["seconds"] for take in takes[index]), 2)
             lines.append(line)
-    return {"chapter": info, "lines": lines, "report": script["report"] if script else "",
+    return {"chapter": info, "lines": lines, "report": script["report"],
+            "manual_draft": manual_draft, "source_hash": script["source_hash"],
+            "voice_rules":script.get("voice_rules",{}), "voice_error":voice_error,
+            "spoken_error":spoken_error, "spoken_conflicts":script.get("spoken_text",{}).get("conflicts",[]),
             "speakers": [NARRATOR, *[row[0] for row in rows]]}
 
 
-def _check_rows(item, rows):
+def _check_rows(item, rows=None, source_hash=None):
     script = item.script()
-    if script is None:
-        raise ValueError("This chapter has not been analyzed.")
-    original = " ".join(" ".join(str(row[1]).split()) for row in script["rows"])
-    edited = " ".join(" ".join(str(row[1]).split()) for row in rows)
-    if original != edited:
-        raise ValueError("The line text has changed. Only speakers and paragraph boundaries can be edited here.")
+    if script is None or script["source_hash"] != project.text_hash(item.text()):
+        script = pipeline.manual_script(item, glossary.load())
+        if source_hash != script["source_hash"]:
+            raise ValueError("The chapter text has changed. Refresh the manual editor before saving.")
+    if rows is not None:
+        original = " ".join(" ".join(str(row[1]).split()) for row in script["rows"])
+        edited = " ".join(" ".join(str(row[1]).split()) for row in rows)
+        if original != edited:
+            raise ValueError("The line text has changed. Only speakers and paragraph boundaries can be edited here.")
     return script
 
 
@@ -249,36 +293,69 @@ def _save_rows(item, script, rows):
     for name in new:
         entries.append(glossary.propose(name, "unknown", entries))
     added = glossary.add_missing(entries)
+    from copy import deepcopy
+    original_script = deepcopy(item.script() or script)
     script["rows"] = clean
+    script = voice_rules.reconcile(original_script, script)
+    script = spoken_text.reconcile(original_script, script)
+    script["speakers"] = list(dict.fromkeys(row[0] for row in clean if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
     item.save_script(script)
+    if item.error_file.exists() and item.error_file.read_text(encoding="utf-8").startswith("analysis:"):
+        item.error_file.unlink()
+        (item.work / "analysis-error.json").unlink(missing_ok=True)
     return added
 
 
 @app.put("/api/chapter/rows")
 def save_rows(data: dict = Body(...)):
-    item = project.get_chapter(data["volume"], data["stem"])
-    script = _check_rows(item, data["rows"])
-    return {"added": _save_rows(item, script, data["rows"])}
+    with worker.idle_guard("saving speaker assignments"):
+        item = project.get_chapter(data["volume"], data["stem"])
+        script = _check_rows(item, data["rows"], data.get("source_hash"))
+        return {"added": _save_rows(item, script, data["rows"])}
 
 
 @app.post("/api/chapter/split")
 def split_row(data: dict = Body(...)):
-    item = project.get_chapter(data["volume"], data["stem"])
-    script = item.script()
-    rows = [list(row) for row in script["rows"]]
-    index, phrase = int(data["index"]), str(data["phrase"]).strip()
-    text = str(rows[index][1])
-    position = text.find(phrase) if phrase else -1
-    if position <= 0:
-        raise ValueError("Enter the exact words where the new segment begins, after the start of the line.")
-    rows[index][1] = text[:position].rstrip()
-    rows.insert(index + 1, [data.get("speaker") or NARRATOR, text[position:].strip(), True, 0])
-    return {"added": _save_rows(item, script, rows)}
+    with worker.idle_guard("saving speaker assignments"):
+        item = project.get_chapter(data["volume"], data["stem"])
+        script = _check_rows(item, source_hash=data.get("source_hash"))
+        rows = [list(row) for row in script["rows"]]
+        index, phrase = int(data["index"]), str(data["phrase"]).strip()
+        text = str(rows[index][1])
+        position = text.find(phrase) if phrase else -1
+        if position <= 0:
+            raise ValueError("Enter the exact words where the new segment begins, after the start of the line.")
+        rows[index][1] = text[:position].rstrip()
+        rows.insert(index + 1, [data.get("speaker") or NARRATOR, text[position:].strip(), True, 0])
+        return {"added": _save_rows(item, script, rows)}
+
+
+@app.post("/api/chapter/spoken-text/preview")
+def preview_spoken_text(data: dict = Body(...)):
+    return spoken_text.plan(data)[1]
+
+
+@app.put("/api/chapter/spoken-text")
+def save_spoken_text(data: dict = Body(...)):
+    with worker.idle_guard("saving spoken text"):
+        return spoken_text.save(data["request"], data["plan_id"])
 
 
 @app.post("/api/chapter/analyze")
 def analyze_one(data: dict = Body(...)):
+    project.get_chapter(data["volume"], data["stem"])
     worker.submit(data["volume"], [data["stem"]], ["analyze"], True)
+    return worker.status()
+
+
+@app.post("/api/chapter/repair")
+def repair_analysis(data: dict = Body(...)):
+    item = project.get_chapter(data["volume"], data["stem"])
+    if data.get("mode") != "small_batches":
+        raise ValueError("Choose smaller-batch analysis. Manual assignments are saved in the chapter editor.")
+    if not item.error_file.exists() or not item.error_file.read_text(encoding="utf-8").startswith("analysis:"):
+        raise ValueError("This chapter has no analysis error. Refresh its status.")
+    worker.submit(data["volume"], [data["stem"]], ["analyze"], True, analysis_mode=data["mode"])
     return worker.status()
 
 
@@ -383,7 +460,7 @@ def unfix_voice(data: dict = Body(...)):
 def characters():
     settings = project.load_settings()
     rows = glossary.load()
-    return {"default_sample": CHARACTER_SAMPLE, "characters": [{**dict(zip(FIELDS, row)), "fixed": _fixed_info(row[0]),
+    return {"default_sample": CHARACTER_SAMPLE, "characters": [{**dict(zip(FIELDS, row)), "read_as":voice_rules.global_rules().get(row[0],row[0]), "fixed": _fixed_info(row[0]),
                             "sample": fixed_voices.sample_for(row[0])} for row in rows],
             "duplicates": glossary.duplicate_voices(rows, settings["narrator"]["mode"]),
             "profiles": {"narrator": list(PROFILES),
@@ -430,6 +507,12 @@ def character_preview(data: dict = Body(...)):
 
 
 # -- narrator and settings ----------------------------------------------------------------------------
+@app.get("/api/video/codecs")
+def video_codecs():
+    from video import codec_capabilities
+    return {"codecs": codec_capabilities()}
+
+
 @app.get("/api/settings")
 def get_settings():
     return {"settings": project.load_settings(), "formats": export.formats(), "ffmpeg": export.available(),
@@ -489,10 +572,11 @@ def show_video(data: dict = Body(...)):
 
 @app.get("/api/audio")
 def audio(path: str):
-    target = (project.ROOT / path).resolve()
-    allowed = [project.WORK.resolve(), project.EXPORT.resolve(), (project.ROOT / "probe").resolve(),
-               fixed_voices.FOLDER.resolve(), presets.FOLDER.resolve()]
-    if not any(target.is_relative_to(folder) for folder in allowed) or not target.is_file():
+    try:
+        target = project.media_path(path)
+    except ValueError:
+        raise HTTPException(404)
+    if not target.is_file():
         raise HTTPException(404)
     return FileResponse(target)
 

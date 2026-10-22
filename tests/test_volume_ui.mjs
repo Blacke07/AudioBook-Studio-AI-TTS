@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../app/web/app.js', import.meta.url), 'utf8');
 const volume = source.slice(source.indexOf('let volumeFilter ='), source.indexOf('/* ---------- chapter editor ---------- */'));
+const workflow = readFileSync(new URL('../app/web/workflow.js', import.meta.url), 'utf8');
 const esc = source.split('\n').find(line => line.startsWith('const esc ='));
 
 function page(chapters = [chapter('one', 'generated'), chapter('two', 'new')]) {
@@ -12,10 +13,14 @@ function page(chapters = [chapter('one', 'generated'), chapter('two', 'new')]) {
   let boxes = [], rows = [];
   const element = (selector, parent) => {
     if (parent) return parent.box;
+    // Like the browser: an id that the page did not render is null, not a harmless stand-in.
+    if (selector.startsWith('#') && !sandbox.view.html.includes(`id="${selector.slice(1)}"`)) return null;
     if (!elements.has(selector)) elements.set(selector, {});
     return elements.get(selector);
   };
   const sandbox = {
+    document: {addEventListener:()=>{}, querySelectorAll:()=>[]},
+    window: {addEventListener:()=>{}},
     view: {set innerHTML(html) {
       this.html = html;
       elements.clear();
@@ -27,13 +32,14 @@ function page(chapters = [chapter('one', 'generated'), chapter('two', 'new')]) {
     $: element, $$: selector => selector === '[data-select]' ? boxes : selector === 'tr.clickable' ? rows : [],
     location:{hash:'#/volume/Demo'}, icon:()=>'', duration:String, chip:()=>'',
     STATE_COLOR:{}, STATE_LABEL:{}, STATE_CLASS:{},
-    scheduleRefresh:()=>{}, toast:()=>{}, pollNow:()=>{}, guard:action=>action(),
+    VoiceRules:{mount:async()=>{}},
+    scheduleRefresh:()=>{}, toast:()=>{}, pollNow:()=>{}, guard:action=>action(), modal:async()=>true,
     api:async (path, options) => {
       calls.push([path, options]);
       return {chapters,volume:{source:'demo'},render_factor:1,video_enabled:false};
     },
   };
-  vm.runInNewContext(esc + '\n' + volume, sandbox);
+  vm.runInNewContext(esc + '\n' + workflow + '\n' + volume, sandbox);
   return {sandbox, element, calls, get boxes() {return boxes;}, get rows() {return rows;},
     async render() {await sandbox.viewVolume('Demo');},
     async select(stems, filter='all') {
@@ -44,7 +50,7 @@ function page(chapters = [chapter('one', 'generated'), chapter('two', 'new')]) {
 }
 
 function chapter(stem, state) {
-  return {stem, title:stem, state, estimated_seconds:1, video:{state:'missing',label:'No video'}};
+  return {stem, title:stem, state, can_generate:['analyzed','generated','exported'].includes(state), can_export:['generated','exported'].includes(state), estimated_seconds:1, video:{state:'missing',label:'No video'}};
 }
 
 test('select-all stays checked after redraw and a second click deselects the batch', async () => {
@@ -107,4 +113,65 @@ test('selection cell does not navigate; native label activation is not toggled t
   }
   p.rows[0].onclick({target:{closest:()=>null}});
   assert.equal(p.sandbox.location.hash, '#/chapter/Demo/one');
+});
+
+
+test('workflow blocks later steps for a mixed batch and enables them for a ready selection', async () => {
+  const p = page();
+  await p.render();
+  assert.match(p.sandbox.view.html, /id="run-render" disabled/);
+  assert.match(p.sandbox.view.html, /id="run-video" disabled/);
+  await p.select(['one']);
+  assert.doesNotMatch(p.sandbox.view.html, /id="run-render" disabled/);
+  assert.doesNotMatch(p.sandbox.view.html, /id="run-video" disabled/);
+  assert.match(p.sandbox.view.html, /id="youtube" disabled/);
+});
+
+test('every control the volume page wires up is rendered, including whole-volume export', async () => {
+  const p = page([chapter('one', 'generated'), chapter('two', 'generated')]);
+  await p.render();  // would throw on a missing id, as the browser did with "null"
+  assert.match(p.sandbox.view.html, /id="run-volume"/);
+  assert.doesNotMatch(p.sandbox.view.html, /id="run-volume" disabled/);
+  await p.select(['one']);  // a selection does not limit whole-volume export
+  assert.doesNotMatch(p.sandbox.view.html, /id="run-volume" disabled/);
+  const mixed = page();
+  await mixed.render();
+  assert.match(mixed.sandbox.view.html, /id="run-volume" disabled/);
+  assert.match(mixed.sandbox.view.html,
+    /id="run-volume" disabled title="Generate current audio for every chapter in this volume\."/);
+});
+
+test('whole-volume export sits in the volume header, not in the audio menu', async () => {
+  const p = page([chapter('one', 'generated'), chapter('two', 'generated')]);
+  await p.render();
+  const html = p.sandbox.view.html;
+  const head = html.slice(html.indexOf('class="page-head"'), html.indexOf('class="card"'));
+  assert.match(head, /id="run-volume"/);
+  assert.match(head, /id="open-source"/);
+  assert.match(head, /id="open-export"/);
+  const audioMenu = html.slice(html.indexOf('data-workflow="audio"'), html.indexOf('data-workflow="video"'));
+  assert.match(audioMenu, /id="run-render"/);
+  assert.match(audioMenu, /id="run-export"/);
+  assert.doesNotMatch(audioMenu, /id="run-volume"/);
+  await p.select(['one']);
+  await p.element('#run-volume').onclick({currentTarget:{}});
+  const job = p.calls.find(([path]) => path === '/api/run')[1].body;
+  assert.deepEqual([...job.stems], ['one', 'two']);
+});
+
+test('the back control follows the logical parent page, not history', async () => {
+  const p = page();
+  await p.render();
+  const parent = (hash) => {
+    const route = p.sandbox.parentRoute(hash);
+    return route && {href: route.href, label: route.label};
+  };
+  assert.deepEqual(parent('#/volume/Demo'), {href: '#/', label: 'Back to volumes'});
+  assert.deepEqual(parent('#/chapter/Demo/one'), {href: '#/volume/Demo', label: 'Back to Demo'});
+  assert.deepEqual(parent('#/chapter/Vol%202/ch%201'), {href: '#/volume/Vol%202', label: 'Back to Vol 2'});
+  for (const top of ['#/', '#/characters', '#/narrator', '#/settings', '#/project']) {
+    assert.equal(parent(top), null);
+  }
+  assert.match(p.sandbox.view.html,
+    /<a class="back" id="back" href="#\/" aria-label="Back to volumes"/);
 });

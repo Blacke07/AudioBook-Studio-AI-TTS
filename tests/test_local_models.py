@@ -1,4 +1,4 @@
-"""The Local Models folder setup prepares: instruction file, no overwrites, and no manual import until models exist."""
+"""The models folder setup prepares: instruction file, no overwrites, and no manual import until models exist."""
 import json
 from pathlib import Path
 import subprocess
@@ -19,7 +19,7 @@ class LocalModelsTests(unittest.TestCase):
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
                         '/reference:System.Web.Extensions.dll', '/resource:' + str(ROOT / 'manifest.json') + ',manifest.json',
                         '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs'),
-                        str(ROOT / 'installer/DesktopRuntime.cs')], check=True, capture_output=True)
+                        str(ROOT / 'installer/DesktopRuntime.cs'), str(ROOT / 'installer/InstallationPaths.cs')], check=True, capture_output=True)
 
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
@@ -32,7 +32,7 @@ class LocalModelsTests(unittest.TestCase):
 
     def prepare(self, *profile):
         subprocess.run([str(self.setup), '--prepare-local-models', str(self.target), *profile], check=True, timeout=60)
-        return self.target / 'Local Models'
+        return self.target / 'models'
 
     def assertListsModelSet(self, text, name):
         manifest = json.loads((ROOT / 'manifest.json').read_text(encoding='utf-8'))
@@ -48,12 +48,12 @@ class LocalModelsTests(unittest.TestCase):
                 listed = 'ollama\\blobs\\' + blob['digest'].replace(':', '-') in text
                 self.assertEqual(listed, blob in chosen, blob['digest'])
 
-    def model_source(self):
+    def model_source(self, download=False):
         script = Path(self.target.parent) / 'bootstrap.ps1'
         script.write_text((ROOT / 'installer/bootstrap.ps1').read_text(encoding='utf-8'), encoding='utf-8-sig')
         before = sorted(str(path) for path in self.target.rglob('*'))
         result = subprocess.run(['powershell.exe', '-NoProfile', '-File', str(script), '-Target', str(self.target),
-                                 '-AcceptLicenses', '-CheckModels'], capture_output=True, text=True, timeout=60)
+                                 '-AcceptLicenses', '-CheckModels', *(['-Download'] if download else [])], capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(before, sorted(str(path) for path in self.target.rglob('*')))  # detection writes nothing
         return result.stdout.strip().splitlines()[-1]
@@ -100,6 +100,16 @@ class LocalModelsTests(unittest.TestCase):
         models = self.prepare()
         (models / 'ollama/blobs/sha256-abc').write_bytes(b'blob')
         self.assertEqual(self.model_source(), 'Model source: manual')
+
+    def test_explicit_download_choice_is_not_changed_by_already_downloaded_models(self):
+        models = self.prepare()
+        (models / 'qwen-talker-1.7b-base-Q8_0.gguf').write_bytes(b'completed fixture')
+        self.assertEqual(self.model_source(download=True), 'Model source: download')
+
+    def test_partial_download_alone_does_not_switch_to_manual_mode(self):
+        models = self.prepare()
+        (models / 'qwen-talker-1.7b-base-Q8_0.gguf.part').write_bytes(b'partial fixture')
+        self.assertEqual(self.model_source(), 'Model source: download')
 
 
 if __name__ == '__main__':

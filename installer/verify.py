@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from state import collect, check_initial
+from layout import Layout
 
 
 def digest(file):
@@ -18,11 +19,12 @@ def digest(file):
 
 def verify(root, models=True, initial=False):
     root = Path(root).resolve()
-    manifest = json.loads((root / 'installation-manifest.json').read_text(encoding='utf-8'))
+    layout = Layout(root)
+    manifest = json.loads(layout.manifest.read_text(encoding='utf-8'))
     if initial:
         check_initial(root, manifest['initial_state_files'])
     else:
-        collect(root)
+        collect(layout.user)
     for item in manifest['payload_files']:
         file = root / item['path']
         if not file.is_file() or digest(file) != item['sha256']:
@@ -41,7 +43,7 @@ def verify(root, models=True, initial=False):
         file = ollama / 'manifests/registry.ollama.ai/library' / repository / version
         if not file.is_file() or digest(file) != manifest['gemma']['sha256']:
             raise RuntimeError('The Gemma manifest does not match the pinned release.')
-    for command in ([str(root / 'tools/ffmpeg/ffmpeg.exe'), '-version'],
+    for command in ([str(layout.program / 'tools/ffmpeg/ffmpeg.exe'), '-version'],
                     [str(root / 'AudioBook Studio.exe'), '--check-resources'],
                     [str(root / 'AudioBook Studio.exe'), '--check-installation'],
                     [str(root / 'Uninstall AudioBook Studio.exe'), '--check']):
@@ -50,9 +52,9 @@ def verify(root, models=True, initial=False):
         if result.returncode:
             raise RuntimeError('Component failed to start: ' + Path(command[0]).name + ': ' + result.stdout.decode('utf-8', 'replace')[-500:])
     native_env = os.environ.copy()
-    native_env['PATH'] = str(root / 'engine/build') + os.pathsep + str(root / 'engine/cuda') + os.pathsep + native_env['PATH']
+    native_env['PATH'] = str(layout.program / 'engine/build') + os.pathsep + str(layout.program / 'engine/cuda') + os.pathsep + native_env['PATH']
     for name in ('tts-server.exe', 'spk-batch.exe'):
-        result = subprocess.run([str(root / 'engine/build' / name), '--help'], env=native_env,
+        result = subprocess.run([str(layout.program / 'engine/build' / name), '--help'], env=native_env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         # Both CLIs return 1 for help; distinguish usage from a missing-DLL exit.
@@ -68,5 +70,5 @@ def verify(root, models=True, initial=False):
 
 
 if __name__ == '__main__':
-    verify(Path(__file__).resolve().parent, '--runtime-only' not in sys.argv, '--initial-state' in sys.argv)
+    verify(Layout.for_program(Path(__file__).resolve().parent).root, '--runtime-only' not in sys.argv, '--initial-state' in sys.argv)
 

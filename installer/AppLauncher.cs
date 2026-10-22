@@ -43,13 +43,13 @@ class AppLauncher : Form {
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window,int attribute,ref int value,int size);
 
-    [STAThread] static int Main(string[] args) {
+    internal static int Run(string[] args) {
         try {
             if(args.Length>0 && args[0]=="--check-resources") {
                 using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico"))
                 using(var icon=new Icon(stream)) return icon.Width>0 ? 0:1;
             }
-            if(args.Length>0 && args[0]=="--check-installation") { CheckFiles(); return 0; }
+            if(args.Length>0 && args[0]=="--check-installation") { CheckFiles(true); return 0; }
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             return RunInstance(Root,delegate {
                 CheckFiles();
@@ -75,14 +75,17 @@ class AppLauncher : Form {
         }
         return 0;
     }
-    static void CheckFiles() {
-        foreach(string name in new[]{".venv/Scripts/python.exe","launcher.py","app.py","installation-manifest.json",
+    static void CheckFiles(bool verifying=false) {
+        foreach(string name in new[]{".venv/Scripts/python.exe","launcher.py","app.py",
             "Microsoft.Web.WebView2.Core.dll","Microsoft.Web.WebView2.WinForms.dll","WebView2Loader.dll"})
-            if(!File.Exists(Path.Combine(Root,name))) throw new FileNotFoundException("Incomplete installation: missing "+name+". Run setup in a dedicated application folder.");
+            if(!File.Exists(InstallationPaths.At(Root,InstallationPaths.Program+"/"+name))) throw new FileNotFoundException("Incomplete installation: missing "+name+". Run setup to repair the program; your data is kept.");
+        if(!File.Exists(InstallationPaths.At(Root,InstallationPaths.Manifest)) || (!verifying && File.Exists(InstallationPaths.At(Root,InstallationPaths.Marker))))
+            throw new InvalidOperationException("Installation or migration is incomplete. Run setup again; your data is kept.");
     }
     internal static ProcessStartInfo ServerCommand(string folder) {
-        var info=new ProcessStartInfo(Path.Combine(folder,".venv/Scripts/python.exe"),"-u "+Quote(Path.Combine(folder,"launcher.py"))+" --no-browser") {
-            WorkingDirectory=folder,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,
+        string program=InstallationPaths.At(folder,InstallationPaths.Program);
+        var info=new ProcessStartInfo(Path.Combine(program,".venv/Scripts/python.exe"),"-B -u "+Quote(Path.Combine(program,"launcher.py"))+" --no-browser") {
+            WorkingDirectory=program,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,
             StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8
         };
         info.EnvironmentVariables["PYTHONUTF8"]="1"; info.EnvironmentVariables["PYTHONIOENCODING"]="utf-8";
@@ -141,7 +144,7 @@ class AppLauncher : Form {
     }
     void ShowWindow() { Show(); if(WindowState==FormWindowState.Minimized) WindowState=visibleState; Activate(); SetForegroundWindow(Handle); }
     internal static string Quote(string value) { return "\""+value.Replace("\"","")+"\""; }
-    void OpenLog() { if(File.Exists(Path.Combine(root,"startup.log"))) Process.Start("notepad.exe",Quote(Path.Combine(root,"startup.log"))); }
+    void OpenLog() { if(File.Exists(InstallationPaths.Log(root,"startup.log"))) Process.Start("notepad.exe",Quote(InstallationPaths.Log(root,"startup.log"))); }
     void WriteLog(string line) { if(line!=null) lock(logLock) { if(output!=null) output.WriteLine(line); } }
     void StartApp() {
         try {
@@ -154,7 +157,8 @@ class AppLauncher : Form {
             }
             string state=DesktopPolicy.StateFolder(root); Directory.CreateDirectory(state);
             if((File.GetAttributes(state)&FileAttributes.ReparsePoint)!=0) throw new IOException("The .desktop folder must not be a link.");
-            output=new StreamWriter(Path.Combine(root,"startup.log"),false,new UTF8Encoding(false)) { AutoFlush=true };
+            Directory.CreateDirectory(Path.GetDirectoryName(InstallationPaths.Log(root,"startup.log")));
+            output=new StreamWriter(InstallationPaths.Log(root,"startup.log"),false,new UTF8Encoding(false)) { AutoFlush=true };
             job=new WindowsJob(); child=new Process { StartInfo=command };
             child.OutputDataReceived+=delegate(object sender,DataReceivedEventArgs e) { WriteLog(e.Data); };
             child.ErrorDataReceived+=delegate(object sender,DataReceivedEventArgs e) { WriteLog(e.Data); };
@@ -254,7 +258,7 @@ class AppLauncher : Form {
         }
     }
     string Tail() {
-        string file=Path.Combine(root,"startup.log"); string[] lines=File.Exists(file)?File.ReadAllLines(file):new string[0];
+        string file=InstallationPaths.Log(root,"startup.log"); string[] lines=File.Exists(file)?File.ReadAllLines(file):new string[0];
         return string.Join(Environment.NewLine,lines,Math.Max(0,lines.Length-10),Math.Min(10,lines.Length));
     }
     void Fail(string message) {

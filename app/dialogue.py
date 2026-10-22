@@ -57,6 +57,7 @@ class Line:
     joined: bool = False
     variant: int = 0   # added to the speaker's variant number when the author asks for another take
     row: int = -1      # index of the script row it comes from (for the editor)
+    voice_role: str = ""  # reading identity; role remains the actual speaker
 
 
 @dataclass(frozen=True)
@@ -263,10 +264,11 @@ def drop_simple_tags(lines, fixed_roles):
         line = lines[index]
         before = result[-1] if result else None
         if (before and line.role == NARRATOR and line.joined and SIMPLE_TAG_RE.match(line.text)
-                and before.role in fixed_roles and before.role != NARRATOR):
+                and (fixed_roles(before) if callable(fixed_roles) else before.role in fixed_roles) and before.role != NARRATOR):
             dropped.add(line.row)
             after = lines[index + 1] if index + 1 < len(lines) else None
-            if after and after.joined and after.role == before.role:
+            if (after and after.joined and after.role == before.role
+                    and (after.voice_role or after.role) == (before.voice_role or before.role)):
                 first = before.text
                 if first.endswith(",") and after.text[:1].isupper():
                     first = first[:-1] + "."  # "It is green," + "Not a warning." reads as two sentences

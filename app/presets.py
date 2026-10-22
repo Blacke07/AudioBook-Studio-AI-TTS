@@ -14,7 +14,7 @@ import glossary
 import project
 from dialogue import NARRATOR
 
-FOLDER = project.ROOT / "presets"
+FOLDER = project.PROGRAM / "presets"
 CATALOG = FOLDER / "presets.json"
 
 

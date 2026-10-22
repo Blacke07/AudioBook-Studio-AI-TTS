@@ -10,6 +10,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'installer'))
+sys.path.insert(0, str(ROOT / 'app'))
+from layout import PROGRAM, USER, LAYOUT_VERSION
 from state import check_initial
 from audit_public import audit, public_file
 from webview2 import restore as restore_webview2
@@ -35,13 +37,13 @@ def build_launcher(compiler, build):
     output = build / 'AudioBook Studio.exe'
     sdk = restore_webview2(ROOT)
     sources = [ROOT / 'installer' / name for name in
-               ('AppLauncher.cs', 'WindowsJob.cs', 'DesktopPolicy.cs', 'DesktopRuntime.cs', 'StudioWebView.cs')]
+               ('DesktopEntry.cs', 'InstallationPaths.cs', 'AppLauncher.cs', 'WindowsJob.cs', 'DesktopPolicy.cs', 'DesktopRuntime.cs', 'StudioWebView.cs')]
     inputs = sources + [icon, Path(__file__), ROOT / 'installer/windows.manifest', ROOT / 'installer/webview2.json']
     fingerprint = {file.name: sha256(file) for file in inputs}
     stamp = build / 'launcher-build.json'
     cached = json.loads(stamp.read_text()) if stamp.exists() else {}
     if not output.exists() or cached.get('inputs') != fingerprint or cached.get('output') != sha256(output):
-        subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
+        subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001', '/main:DesktopEntry',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
                         '/reference:System.Web.Extensions.dll',
                         '/reference:' + str(sdk / 'Microsoft.Web.WebView2.Core.dll'),
@@ -61,7 +63,7 @@ def build_uninstaller(compiler, build, icon):
     subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                     '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll',
                     '/win32manifest:' + str(ROOT / 'installer/windows.manifest'), '/win32icon:' + str(icon),
-                    '/out:' + str(output), str(ROOT / 'installer/Uninstall.cs')], check=True)
+                    '/out:' + str(output), str(ROOT / 'installer/Uninstall.cs'), str(ROOT / 'installer/InstallationPaths.cs')], check=True)
     subprocess.run([str(output), '--check'], check=True)
     return output
 
@@ -76,41 +78,49 @@ def main(reuse_payload=False):
     manifest = json.loads((ROOT / 'manifest.json').read_text(encoding='utf-8'))
     state = json.loads((ROOT / 'release-state.json').read_text(encoding='utf-8'))
     check_initial(ROOT / 'app', state['files'])
-    initial_names = {item['path'] for item in state['files']} | {'volumes.json'}
+    source_initial = {item['path'] for item in state['files']} | {'volumes.json'}
+    initial_names = {USER+'/'+name for name in source_initial}
+    manifest['layout_version'] = LAYOUT_VERSION
     files = {}
     files['AudioBook Studio.exe'] = launcher_exe
     for name in ('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'):
-        files[name] = build / name
+        files[PROGRAM+'/'+name] = build / name
     files['Uninstall AudioBook Studio.exe'] = build_uninstaller(compiler, build, icon)
-    files['assets/audiobook.ico'] = icon
+    files[PROGRAM+'/assets/audiobook.ico'] = icon
     for base in [ROOT / 'app', ROOT / 'build/native']:
         for file in base.rglob('*'):
-            if file.is_file() and '__pycache__' not in file.parts and not file.suffix == '.pyc':
+            if file.is_file() and '__pycache__' not in file.parts and not file.suffix == '.pyc' and not file.name.startswith('test_'):
                 if base == ROOT / 'app' and not public_file(file.relative_to(ROOT)):
                     continue
                 relative = file.relative_to(base).as_posix()
+                relative = (USER if base == ROOT/'app' and relative in source_initial else PROGRAM)+'/'+relative
                 if relative in files:
                     raise RuntimeError('Duplicate file in payload: ' + relative)
                 files[relative] = file
     for file in (ROOT / 'licenses').rglob('*'):
         if file.is_file():
-            files['licenses/' + file.relative_to(ROOT / 'licenses').as_posix()] = file
+            files[PROGRAM+'/licenses/' + file.relative_to(ROOT / 'licenses').as_posix()] = file
     for file in (ROOT / 'docs').rglob('*'):
         if file.is_file() and public_file(file.relative_to(ROOT)):
-            files['docs/' + file.relative_to(ROOT / 'docs').as_posix()] = file
+            files[PROGRAM+'/docs/' + file.relative_to(ROOT / 'docs').as_posix()] = file
     for source, target in [('installer/launcher.py','launcher.py'), ('installer/verify.py','verify_installation.py'),
                            ('installer/state.py','state.py'),
+                           ('installer/migration.py','migration.py'), ('installer/publication.py','publication.py'),
+                           ('installer/restore_data.py','restore_data.py'),
                            ('requirements.lock','requirements.lock'), ('README.md','README.md'),
                            ('LICENSE','LICENSE'), ('THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'),
                            ('PRIVACY.md','PRIVACY.md'), ('VERIFICATION.md','VERIFICATION.md'),
                            ('demo-provenance.json','demo-provenance.json')]:
-        files[target] = ROOT / source
+        files[PROGRAM+'/'+target] = ROOT / source
+    internal_readme=build/'Data-README.txt'
+    internal_readme.write_text('Internal application files. Use the folders next to this one for your audiobooks and backups.\n',encoding='utf-8')
+    files['Data/README.txt']=internal_readme
     for target, text in {
         'Verify Installation.cmd': '@echo off\r\nsetlocal\r\nset "PYTHONUTF8=1"\r\ncd /d "%~dp0"\r\n"%~dp0.venv\\Scripts\\python.exe" "%~dp0verify_installation.py"\r\npause\r\n',
     }.items():
         path = build / target
         path.write_bytes(text.encode('ascii'))
-        files[target] = path
+        files[PROGRAM+'/'+target] = path
     payload = build / 'payload.zip'
     records = []
     if reuse_payload:
@@ -153,9 +163,11 @@ def main(reuse_payload=False):
                  '/win32icon:' + str(icon), '/resource:' + str(icon) + ',app.ico',
                  '/win32manifest:' + str(ROOT / 'installer/windows.manifest'), '/out:' + str(output)]
     for file, name in [(bootstrap,'bootstrap.ps1'), (ROOT / 'installer/install.py','install.py'),
+                       (ROOT/'app/layout.py','layout.py'), (ROOT/'installer/migration.py','migration.py'),
+                       (ROOT/'installer/publication.py','publication.py'), (ROOT/'installer/state.py','state.py'),
                        (final_manifest,'manifest.json'), (payload,'payload.zip'), (ROOT / 'README.md','README.md')]:
         arguments.append('/resource:' + str(file) + ',' + name)
-    arguments.extend(str(ROOT / 'installer' / name) for name in ('Setup.cs', 'DesktopRuntime.cs'))
+    arguments.extend(str(ROOT / 'installer' / name) for name in ('Setup.cs', 'DesktopRuntime.cs', 'InstallationPaths.cs'))
     subprocess.run(arguments, check=True)
     subprocess.run([str(output), '--check-resources'], check=True)
     checksum = sha256(output)

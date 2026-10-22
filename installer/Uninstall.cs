@@ -26,7 +26,10 @@ class Uninstaller {
 
     readonly string root;
     readonly bool dryRun;
-    bool deleteData;
+    bool deleteData,deleteAudio,deleteBackups,deleteModels,modern;
+    string ManifestPath { get { return Path.Combine(root,modern?InstallationPaths.Manifest:Manifest); } }
+    string ShortcutsPath { get { return Path.Combine(root,modern?InstallationPaths.State+"/shortcuts.txt":Shortcuts); } }
+    IEnumerable<string> ProgramTrees { get { return modern ? new[]{"Data/Program/runtime","Data/Program/.venv","Data/Program/tools/ffmpeg","Data/Program/tools/ollama","Data/Program/licenses/ffmpeg","Data/State/install","Data/State/downloads","Data/State/desktop","Data/State/logs"} : OwnedTrees; } }
     long freed;
     int removed;
     readonly List<string> failures=new List<string>(), planned=new List<string>();
@@ -49,6 +52,7 @@ class Uninstaller {
             if(!options.ContainsKey("--dry-run") && IsInside(self,target)) return Relaunch(self,target,options);
             if(options.ContainsKey("--wait")) WaitFor(int.Parse(options["--wait"]));
             job=new Uninstaller(target,options.ContainsKey("--dry-run"));
+            job.deleteAudio=options.ContainsKey("--delete-audiobooks"); job.deleteBackups=options.ContainsKey("--delete-backups"); job.deleteModels=options.ContainsKey("--delete-models");
             int code=job.Run(quiet,options.ContainsKey("--delete-data"));
             job.Report(report,code,null);
             return code;
@@ -70,33 +74,50 @@ class Uninstaller {
         bool hasData=DataPaths(manifest).Any(path => File.Exists(path) || Directory.Exists(path));
         if(!quiet) {
             string question="Remove AudioBook Studio from this folder?\n\n"+root+"\n\n"+
-                "This removes the application, its private Python, the TTS engine, FFmpeg, Ollama and the downloaded models "+
-                "("+Size(AppPaths(manifest).Concat(OwnedTrees.Select(tree => Path.Combine(root,tree))))+").\n\n"+
+                "This removes the program, its private Python, TTS engine, FFmpeg and Ollama "+
+                "("+Size(AppPaths(manifest).Concat(ProgramTrees.Select(tree => Path.Combine(root,tree))))+").\n\n"+
+                "Your audiobooks, backups, models, settings and voices are kept unless you explicitly choose to delete them.\n\n"+
                 "Your manuscripts are not touched: they stay in the folders you chose. "+
-                "Local Models, the setup EXE and other files you placed here are kept.\n\nContinue?";
+                "The setup EXE and unknown files you placed here are kept.\n\nContinue?";
             if(MessageBox.Show(question,Title,MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)
                 return 5;
             if(hasData) {
                 string data="Also delete your AudioBook Studio data in this folder ("+Size(DataPaths(manifest))+")?\n\n"+
                     "• settings, characters and the list of volumes\n• fixed voices (voices folder)\n"+
-                    "• generated passages and chapter audio (work folder)\n• exported audiobooks (export folder)\n\n"+
+                    "• generated passages and chapter audio (work folder)\n\n"+
                     "No keeps them in this folder. Yes deletes them permanently.";
                 deleteRequested=MessageBox.Show(data,Title,MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes;
             }
+            deleteAudio=AskDelete("finished audiobooks",modern?"Audiobooks":"export");
+            deleteBackups=AskDelete("project and migration backups",modern?"Backups":"projects-backup");
+            deleteModels=AskDelete("downloaded models (you would need to download them again)","models");
         }
         deleteData=deleteRequested;
         RemoveShortcuts();
-        foreach(string tree in OwnedTrees) Delete(Path.Combine(root,tree));
-        foreach(string file in OwnedFiles) Delete(Path.Combine(root,file));
+        foreach(string tree in ProgramTrees) Delete(Path.Combine(root,tree));
+        foreach(string file in modern?new[]{Marker}:OwnedFiles) Delete(Path.Combine(root,modern?InstallationPaths.State+"/"+file:file));
         foreach(string path in AppPaths(manifest)) if(!IsSelf(path)) Delete(path);
-        foreach(string cache in Caches(root)) Delete(cache);
+        foreach(string cache in Caches(modern?InstallationPaths.At(root,InstallationPaths.Program):root)) Delete(cache);
         if(deleteData) foreach(string path in DataPaths(manifest)) Delete(path);
+        if(deleteAudio) Delete(Path.Combine(root,modern?"Audiobooks":"export"));
+        if(deleteBackups) Delete(Path.Combine(root,modern?"Backups":"projects-backup"));
+        if(deleteModels) foreach(string path in ModelPaths(manifest)) Delete(Inside(path));
         RemoveEmptyFolders(manifest);
-        // Keep the uninstaller and its manifest while something is left over, so it can run again.
-        if(failures.Count==0) { Delete(Path.Combine(root,ExeName)); Delete(Path.Combine(root,Manifest)); Delete(Path.Combine(root,Shortcuts)); }
+        // Keep the uninstaller on failure; retain installation identity over preserved author data.
+        if(failures.Count==0) {
+            Delete(Path.Combine(root,ExeName)); Delete(ShortcutsPath);
+            // Retain the installation identity for a safe reinstall over preserved data.
+            if(deleteData && deleteAudio && deleteBackups && deleteModels) Delete(ManifestPath);
+        }
         bool rootRemoved=!dryRun && failures.Count==0 && Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).Any() && TryRemove(root);
         if(!quiet) Summary(rootRemoved);
         return failures.Count>0 ? 3 : 0;
+    }
+
+    bool AskDelete(string description,string folder) {
+        if(!Directory.Exists(Path.Combine(root,folder))) return false;
+        return MessageBox.Show("Also permanently delete "+description+"?\n\nNo keeps them. Yes deletes them.",Title,
+            MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes;
     }
 
     // -- what belongs to the installation -----------------------------------------------------------
@@ -106,7 +127,13 @@ class Uninstaller {
         if(!Directory.Exists(root)) throw new InvalidOperationException("Folder not found: "+root);
         if((File.GetAttributes(root)&FileAttributes.ReparsePoint)!=0)
             throw new InvalidOperationException("The installation folder is a link to another folder. Remove the link itself instead.");
-        string manifestFile=Path.Combine(root,Manifest), marker=Path.Combine(root,Marker);
+        foreach(string directory in new[]{"Data","Data/State","Data/Program"}) {
+            string path=Path.Combine(root,directory);
+            if(Directory.Exists(path) && (File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidOperationException("An installation parent folder is a link. Nothing was removed: "+path);
+        }
+        modern=File.Exists(InstallationPaths.At(root,InstallationPaths.Manifest)) || File.Exists(InstallationPaths.At(root,InstallationPaths.Marker));
+        string manifestFile=ManifestPath, marker=Path.Combine(root,modern?InstallationPaths.Marker:Marker);
         Dictionary<string,object> manifest=null;
         if(File.Exists(manifestFile)) {
             try { manifest=new JavaScriptSerializer { MaxJsonLength=int.MaxValue }.DeserializeObject(File.ReadAllText(manifestFile,Encoding.UTF8)) as Dictionary<string,object>; }
@@ -143,16 +170,35 @@ class Uninstaller {
             throw new InvalidOperationException("The installation manifest names a path outside this folder: "+relative+". Nothing was removed.");
         string full=Path.GetFullPath(Path.Combine(root,relative));
         if(!IsInside(full,root)) throw new InvalidOperationException("The installation manifest names a path outside this folder: "+relative);
+        string parent=root;
+        string[] components=relative.Replace('\\','/').Split('/');
+        foreach(string part in components.Take(components.Length-1)) {
+            parent=Path.Combine(parent,part);
+            try {
+                if((File.GetAttributes(parent)&FileAttributes.ReparsePoint)!=0)
+                    throw new InvalidOperationException("A manifest path has a linked parent. Nothing was removed: "+parent);
+            } catch(FileNotFoundException) { break; } catch(DirectoryNotFoundException) { break; }
+        }
         return full;
     }
 
     IEnumerable<string> AppPaths(Dictionary<string,object> manifest) {
-        return Relative(manifest,"payload_files").Concat(ModelPaths(manifest)).Select(Inside);
+        foreach(string relative in Relative(manifest,"payload_files")) {
+            string normalized=relative.Replace('\\','/');
+            if(normalized.StartsWith("models/",StringComparison.OrdinalIgnoreCase) || normalized.StartsWith("Data/User/",StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("Audiobooks/",StringComparison.OrdinalIgnoreCase) || normalized.StartsWith("Backups/",StringComparison.OrdinalIgnoreCase) ||
+               DataFiles.Contains(normalized,StringComparer.OrdinalIgnoreCase) || DataTrees.Any(tree=>normalized.StartsWith(tree+"/",StringComparison.OrdinalIgnoreCase))) continue;
+            if(modern && !normalized.StartsWith("Data/Program/",StringComparison.OrdinalIgnoreCase) && normalized!="AudioBook Studio.exe" &&
+               normalized!=ExeName && normalized!="Data/README.txt") throw new InvalidOperationException("Unexpected program path in installation manifest.");
+            yield return Inside(relative);
+        }
     }
 
     IEnumerable<string> DataPaths(Dictionary<string,object> manifest) {
-        return DataFiles.Concat(DataTrees).Select(name => Path.Combine(root,name))
-            .Concat(Relative(manifest,"initial_state_files").Select(Inside)).Distinct(StringComparer.OrdinalIgnoreCase);
+        if(modern) return new[]{InstallationPaths.At(root,InstallationPaths.User)};
+        return DataFiles.Concat(new[]{"voices","work","projects-state"}).Select(name => Path.Combine(root,name))
+            .Concat(Relative(manifest,"initial_state_files").Where(name=>DataFiles.Contains(name,StringComparer.OrdinalIgnoreCase) ||
+                name.Replace('\\','/').StartsWith("voices/",StringComparison.OrdinalIgnoreCase)).Select(Inside)).Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
     bool IsSelf(string path) {
@@ -163,8 +209,10 @@ class Uninstaller {
 
     // Python byte-code caches next to the application's own modules (never inside the user's data).
     IEnumerable<string> Caches(string folder) {
+        if(!Directory.Exists(folder)) yield break;
         foreach(string directory in SafeDirectories(folder)) {
             string name=Path.GetFileName(directory);
+            if(folder==root && new[]{"models","Data","Audiobooks","Backups","projects-backup"}.Contains(name,StringComparer.OrdinalIgnoreCase)) continue;
             if(folder==root && DataTrees.Contains(name,StringComparer.OrdinalIgnoreCase)) continue;
             if(name=="__pycache__") { yield return directory; continue; }
             foreach(string inner in Caches(directory)) yield return inner;
@@ -216,7 +264,7 @@ class Uninstaller {
 
     // Desktop and Start menu shortcuts setup recorded. Each is removed only while it still opens this installation.
     void RemoveShortcuts() {
-        string list=Path.Combine(root,Shortcuts);
+        string list=ShortcutsPath;
         if(!File.Exists(list)) return;
         foreach(string line in File.ReadAllLines(list)) {
             string link=line.Trim();
@@ -241,12 +289,14 @@ class Uninstaller {
     }
 
     void RemoveEmptyFolders(Dictionary<string,object> manifest) {
-        var tops=new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "models","tools","licenses" };
+        if(modern) { string program=InstallationPaths.At(root,InstallationPaths.Program); if(Directory.Exists(program)) PruneEmpty(program); return; }
+        var tops=new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "tools","licenses" };
         foreach(string relative in Relative(manifest,"payload_files")) {
             string[] parts=relative.Split('/','\\');
-            if(parts.Length>1) tops.Add(parts[0]);
+            if(parts.Length>1 && parts[0]!="models" && !DataTrees.Contains(parts[0])) tops.Add(parts[0]);
         }
-        if(deleteData) foreach(string tree in DataTrees) tops.Add(tree);
+        if(deleteData) foreach(string tree in new[]{"voices","work"}) tops.Add(tree);
+        if(deleteModels) tops.Add("models");
         foreach(string top in tops) {
             string folder=Path.Combine(root,top);
             if(Directory.Exists(folder) && (File.GetAttributes(folder)&FileAttributes.ReparsePoint)==0) PruneEmpty(folder);
@@ -272,7 +322,7 @@ class Uninstaller {
             text.Append(failures.Count+" item(s) could not be removed, for example:\n"+failures[0]+
                         "\n\nClose programs using these files and run "+ExeName+" again.\n\n");
         if(!deleteData && DataPaths(null).Any(path => File.Exists(path) || Directory.Exists(path)))
-            text.Append("Your data was kept in:\n"+root+"\n(settings, voices, work, export). Delete that folder yourself when you no longer need it.\n\n");
+            text.Append("Your data was kept in:\n"+root+"\nYou can reinstall here. Keep Audiobooks, Backups, models and Data/User while you need them.\n\n");
         else if(rootRemoved) text.Append("The installation folder was removed.\n\n");
         text.Append("The shared setup download cache can be deleted separately:\n"+
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AudioBookStudio-Installer"));
@@ -321,7 +371,7 @@ class Uninstaller {
         string copy=Path.Combine(folder,ExeName);
         File.Copy(self,copy);
         var arguments=new StringBuilder("--target "+Quote(target)+" --wait "+Process.GetCurrentProcess().Id);
-        foreach(string flag in new[] { "--yes","--delete-data" }) if(options.ContainsKey(flag)) arguments.Append(" "+flag);
+        foreach(string flag in new[] { "--yes","--delete-data","--delete-audiobooks","--delete-backups","--delete-models" }) if(options.ContainsKey(flag)) arguments.Append(" "+flag);
         if(options.ContainsKey("--report")) arguments.Append(" --report "+Quote(options["--report"]));
         Process.Start(new ProcessStartInfo(copy,arguments.ToString()) { UseShellExecute=false,WorkingDirectory=folder });
         return 0;
@@ -335,7 +385,11 @@ class Uninstaller {
     static void CleanTemporaryCopy(string self) {
         string folder=Path.GetDirectoryName(self);
         if(!Path.GetFileName(folder).StartsWith(TempPrefix) || !IsInside(folder,Path.GetTempPath())) return;
-        Process.Start(new ProcessStartInfo("cmd.exe","/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q "+Quote(folder)) {
+        string script="Start-Sleep -Seconds 2; $target='"+folder.Replace("'","''")+"'; "+
+            "$resolved=[IO.Path]::GetFullPath($target); if ([IO.Path]::GetDirectoryName($resolved) -eq [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\\') "+
+            "-and [IO.Path]::GetFileName($resolved).StartsWith('"+TempPrefix+"')) { Remove-Item -LiteralPath $resolved -Recurse -Force }";
+        string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        Process.Start(new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "+encoded) {
             UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetTempPath() });
     }
 }

@@ -9,16 +9,17 @@ receive normal download request information such as an IP address. Manual model 
 model downloads; the other software still downloads. Vendor tools may make their own network requests.
 The application is designed to use local model inference, not cloud services.
 
-The desktop window uses a dedicated Microsoft WebView2 profile under `.desktop/WebView2`, separate
+The desktop window uses a dedicated Microsoft WebView2 profile under `Data/State/desktop/WebView2`, separate
 from your browser's profiles. It can contain local page storage, cache and history. The embedded page
 is restricted to this application's loopback origin; external HTTP(S) links clicked by the user open
 in the default browser. Host-object access, web messaging, password saving, autofill and permission
 requests are disabled for the embedded content. The shared Microsoft runtime may make its own vendor
 requests or receive updates. If it is missing, setup asks before contacting Microsoft to install it.
-Uninstallation removes the dedicated `.desktop` folder, but keeps the shared WebView2 Runtime.
+Uninstallation removes the dedicated desktop profile, but keeps the shared WebView2 Runtime.
 
 Manuscripts are read from folders chosen by the user. Working scripts, speaker assignments, audio caches,
-settings, volume paths and fixed voice WAVs are stored in the installation folder. Logs can include local
+settings, volume paths and fixed voice WAVs are stored in `Data/User` inside the installation. Finished output
+is in `Audiobooks`, private backups in `Backups`, and logs in `Data/State/logs`. Logs can include local
 paths and error context. Review logs before sharing them. Deleting a volume from the interface does not
 delete the original manuscript. Back up source material independently.
 
@@ -44,7 +45,7 @@ those packages publicly. Cast-only exports omit scripts and real-book audition e
 voice notes, WAV references and exact transcripts. Review them before sharing a voice pack.
 
 Import preview does not write any project files. Applying an import creates a private backup under
-`projects-backup`; import reports and recovery journals live under `projects-state`. Backups contain
+`Backups/Projects`; import reports and recovery journals live under `Data/User/projects-state`. Backups contain
 settings, voices, source folder paths and saved script text and should be kept private. Undo can replace
 later edits and first creates another safety backup. Generated chapter audio, exports, caches, models
 and original manuscript files are not moved or deleted by project import/Undo.

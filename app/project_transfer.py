@@ -144,7 +144,7 @@ def backup():
     meta = package.json_data(files['project.json'])
     meta['_snapshot_existing'] = existing
     files['project.json'] = package.encoded(meta)
-    folder = project.ROOT/'projects-backup'
+    folder = project.backups_folder()
     folder.mkdir(exist_ok=True)
     path = folder/f'{datetime.now():%Y-%m-%d-%H%M%S}-{uuid.uuid4().hex[:8]}.abstudio'
     temporary = path.with_suffix('.tmp')
@@ -195,6 +195,27 @@ def plan(incoming, choices):
     by_name = {r[0]:r for r in rows}
     registry, samples = fixed_voices.load(), fixed_voices.samples()
     if 'cast' in selected:
+        from voice_rules import explicit_rules
+        from character_registry import organization, document
+        merged_rules = explicit_rules()
+        incoming_data = package.json_data(incoming.files['characters.json'])
+        incoming_rules = explicit_rules(incoming_data)
+        merged_org = organization()
+        imported_org = organization(incoming_data)
+        category_ids = {c['id']:c for c in merged_org['categories']}
+        category_map = {}
+        for category in imported_org['categories']:
+            key = category['id']
+            if key in category_ids and category_ids[key] != category:
+                key = 'import-' + hashlib.sha256(package.encoded(category)).hexdigest()[:16]
+            # Distinct IDs with identical names reuse the existing category and policy.
+            same = next((c for c in merged_org['categories'] if c['name'].casefold() == category['name'].casefold()), None)
+            if same:
+                key = same['id']
+            elif key not in category_ids:
+                merged_org['categories'].append({**category, 'id':key})
+                category_ids[key] = category
+            category_map[category['id']] = key
         changed_roles = set()
         for item in incoming.characters:
             name = item[0]
@@ -204,11 +225,20 @@ def plan(incoming, choices):
                 row('character',name,'skip','Keep mine', conflict=True)
                 continue
             row('character',name,'update' if name in by_name else 'add', conflict=name in by_name)
+            merged_rules.pop(name, None)
+            if name in incoming_rules:
+                merged_rules[name] = incoming_rules[name]
             by_name[name] = item
             changed_roles.add(name)
+            metadata = dict(imported_org['characters'][name])
+            metadata['category'] = category_map[metadata['category']]
+            merged_org['characters'][name] = metadata
         merged = list(by_name.values())
-        if merged!=rows:
-            writes['characters.json'] = package.encoded(glossary.to_data(merged))
+        merged_data = glossary.to_data(merged, read_as=merged_rules)
+        merged_data['organization'] = merged_org
+        organization(merged_data)
+        if changed_roles and merged_data != document():
+            writes['characters.json'] = package.encoded(merged_data)
         for role, entry in incoming.registry.items():
             if role in registry and role not in choices.get('voices',[]):
                 row('voice',role,'skip','Keep mine',conflict=True)
@@ -290,8 +320,14 @@ def plan(incoming, choices):
             if any(item[0] not in roles for item in script['rows']):
                 row('script',key,'skip','A speaker is missing from the current cast',conflict=conflict)
                 continue
+            rule_targets = list(script.get('voice_rules',{}).get('characters',{}).values()) + [entry['read_as'] for entry in script.get('voice_rules',{}).get('lines',[])]
+            if any(role not in roles for role in rule_targets):
+                row('script',key,'skip','A reading voice is missing from the current cast',conflict=conflict)
+                continue
             writes[name] = package.encoded(script)
-            row('script',key,'update' if conflict else 'add',conflict=conflict)
+            spoken_count=len(script.get('spoken_text',{}).get('lines',[]))
+            note=(f'Includes {spoken_count} spoken-text overrides. Review them in the chapter editor.' if spoken_count else '')
+            row('script',key,'update' if conflict else 'add',note,conflict=conflict)
     return writes, {'items':report,'ignored':incoming.ignored,'changes':len(writes),
                     'contains_book_text':bool(incoming.scripts)}
 
@@ -320,7 +356,7 @@ def undo():
     last = project._read_json(project.ROOT/'projects-state/last-import.json', None)
     if not last:
         raise ValueError('There is no import to undo.')
-    file = project.ROOT/'projects-backup'/package.component(last['backup'])
+    file = project.backups_folder()/package.component(last['backup'])
     if hashlib.sha256(file.read_bytes()).hexdigest()!=last['sha256']:
         raise ValueError('The import backup has changed. Undo refused.')
     saved = package.read_package(file)
@@ -342,6 +378,6 @@ def undo():
 
 
 def history():
-    folder = project.ROOT/'projects-backup'
+    folder = project.backups_folder()
     return {'backups':[file.name for file in sorted(folder.glob('*.abstudio'),reverse=True)][:20],
             'last_import':project._read_json(project.ROOT/'projects-state/last-import.json', None)}

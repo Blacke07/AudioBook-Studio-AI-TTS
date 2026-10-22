@@ -1,6 +1,7 @@
 """Propose speaker labels using the existing local Ollama model; retain source text."""
 import json
 import re
+from copy import deepcopy
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -11,6 +12,7 @@ from dialogue import INNER_VOICE, NARRATOR, PAUSE, PRONOUNS, UNASSIGNED, prepare
 URL = "http://127.0.0.1:11434"
 MODEL = model_profile.CURRENT["gemma"]
 BATCH = 12
+REPAIR_BATCH = 3
 CONTEXT_CHARS = 6000
 SCHEMA = {
     "type": "object", "properties": {
@@ -21,6 +23,7 @@ SCHEMA = {
                 "gender": {"type": "string", "enum": ["male", "female", "unknown"]},
                 "basis": {"type": "string", "enum": ["explicit", "context", "unclear"]},
                 "reason": {"type": "string"},
+                "category": {"type": "string"},
             }, "required": ["id", "speaker", "gender", "basis", "reason"],
             "additionalProperties": False,
         }},
@@ -44,7 +47,29 @@ two people talking, but check the content: one character may say two consecutive
 If the identity is not established, use speaker=null, basis=unclear. Do not assign Narrator to dialogue.
 Gender: use the glossary, or explicit pronouns/descriptions in the story; otherwise unknown.
 Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
-Give a brief reason (at most twelve words). The output must match the supplied JSON schema."""
+Give a brief reason (at most twelve words). For a new speaker you may suggest a category ID from categories.
+Category order is author priority, never evidence of who speaks. Never prefer a major character over textual evidence.
+The output must match the supplied JSON schema."""
+
+
+class AnalysisError(ValueError):
+    """An unusable model response, with text-free details for the repair dialog."""
+    def __init__(self, message, code, ids, items=None):
+        super().__init__(message + " No assignments were applied. Use Diagnose / repair to continue.")
+        returned = [item.get("id") for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+        self.diagnostic = {"code": code, "expected_count": len(ids),
+                           "returned_count": len(items) if isinstance(items, list) else None,
+                           "requested_rows": [i + 1 for i in ids],
+                           "missing_rows": [i + 1 for i in ids if i not in returned]}
+
+
+def assignment_schema(ids):
+    """Constrain both the batch length and the permitted row IDs, not just their JSON types."""
+    schema = deepcopy(SCHEMA)
+    array = schema["properties"]["assignments"]
+    array.update(minItems=len(ids), maxItems=len(ids))
+    array["items"]["properties"]["id"]["enum"] = list(ids)
+    return schema
 
 
 def request(path, data=None, timeout=30):
@@ -77,21 +102,22 @@ def validate_assignments(items, ids, source, known, aliases=None, genders=None, 
     character acting right before the row."""
     aliases, genders, hints = aliases or {}, genders or {}, hints or {}
     if not isinstance(items, list) or len(items) != len(ids):
-        raise ValueError("AI did not assign all requested lines. No assignments were applied.")
+        count = len(items) if isinstance(items, list) else "no valid list of"
+        raise AnalysisError(f"AI returned {count} assignments; {len(ids)} were required.", "incomplete", ids, items)
     result = []
     for item, expected_id in zip(items, ids):
-        if item.get("id") != expected_id:
-            raise ValueError("AI changed the line order. No assignments were applied.")
+        if not isinstance(item, dict) or type(item.get("id")) is not int or item["id"] != expected_id:
+            raise AnalysisError("AI changed or repeated the requested line IDs.", "line_ids", ids, items)
         basis = item.get("basis")
         gender = item.get("gender")
         if basis not in ("explicit", "context", "unclear") or gender not in ("male", "female", "unknown"):
-            raise ValueError("AI returned an invalid assignment type.")
+            raise AnalysisError("AI returned an invalid assignment type.", "invalid", ids, items)
         speaker = item.get("speaker")
         reason = str(item.get("reason", ""))[:180]
         if basis == "unclear" or speaker is None:
             speaker, basis = None, "unclear"
         elif not isinstance(speaker, str):
-            raise ValueError("AI returned an invalid speaker name.")
+            raise AnalysisError("AI returned an invalid speaker name.", "invalid", ids, items)
         elif not speaker.strip() or speaker.strip() in (NARRATOR, UNASSIGNED, PAUSE, "Narrator"):
             speaker, basis, reason = None, "unclear", "AI did not name a character"
         else:
@@ -108,7 +134,8 @@ def validate_assignments(items, ids, source, known, aliases=None, genders=None, 
         elif speaker and actor and speaker != actor and basis != "explicit":
             # Two signals disagree: the author decides instead of the model.
             speaker, basis, reason = None, "unclear", f"AI: {speaker}, but the preceding action belongs to {actor}"
-        result.append({"id": expected_id, "speaker": speaker, "gender": gender, "basis": basis, "reason": reason})
+        result.append({"id": expected_id, "speaker": speaker, "gender": gender, "basis": basis, "reason": reason,
+                       **({'category':item['category']} if isinstance(item.get('category'), str) else {})})
     return result
 
 
@@ -168,11 +195,13 @@ def release_model():
         pass  # Ollama not running: nothing is loaded.
 
 
-def attribute(text, glossary_rows, narrator_mode_name, progress, release=True):
+def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, batch_size=BATCH, proposals=None):
     """Split the text, take named speech tags literally, ask Gemma only for the rest, propose voices for new
     characters. Existing glossary voices are never changed. Returns script rows, source, glossary, report."""
     if not text.strip():
         raise ValueError("Enter or import text first.")
+    if batch_size not in (BATCH, REPAIR_BATCH):
+        raise ValueError("Unsupported analysis batch size.")
     entries = glossary.normalize(glossary_rows)
     aliases = glossary.alias_map(entries)
     genders = {row[0]: glossary.GENDERS[row[2]] for row in entries}
@@ -188,10 +217,18 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True):
     ids = [i for i, row in enumerate(rows) if row[0] == UNASSIGNED]
     known = list(dict.fromkeys([*genders, *(row[0] for row in rows if row[0] not in (NARRATOR, PAUSE, UNASSIGNED))]))
     assignments = []
-    batches = [ids[i:i + BATCH] for i in range(0, len(ids), BATCH)]
+    batches = [ids[i:i + batch_size] for i in range(0, len(ids), batch_size)]
     if batches:
         ensure_ollama()
     characters = relevant_characters(entries, text)
+    from character_registry import organization
+    registry = organization()
+    priorities = {cat['id']: index for index,cat in enumerate(registry['categories'])}
+    for character in characters:
+        category = registry['characters'].get(character['name'], {}).get('category', 'uncategorized')
+        character['category'] = category
+        character['priority'] = priorities.get(category, len(priorities))
+    characters.sort(key=lambda c:c['priority'])
     try:
         for batch_number, target_ids in enumerate(batches):
             progress(batch_number / len(batches), desc=f"Identifying speakers · batch {batch_number + 1}/{len(batches)}")
@@ -207,21 +244,35 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True):
                         beats[index] = record["action_by"]
                     if index in hints:
                         record["tag"] = hints[index]
-            content = {"characters": characters, "other_known_speakers": [n for n in known if n not in genders],
+            from character_registry import organization
+            content = {"categories":organization()['categories'], "characters": characters, "other_known_speakers": [n for n in known if n not in genders],
                        "context": context, "requested_ids": target_ids}
+            schema = assignment_schema(target_ids)
             response = request("/api/chat", {
                 "model": MODEL, "stream": False, "think": False, "keep_alive": "2m",
-                "format": SCHEMA,
+                "format": schema,
                 "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 2048},
-                "messages": [{"role": "system", "content": SYSTEM + "\nSchema: " + json.dumps(SCHEMA)},
+                "messages": [{"role": "system", "content": SYSTEM + "\nSchema: " + json.dumps(schema)},
                              {"role": "user", "content": json.dumps(content, ensure_ascii=False)}],
             }, timeout=600)
-            if response.get("done_reason") == "length":
-                raise ValueError("The AI response was truncated. No assignments were applied.")
-            parsed = json.loads(response["message"]["content"])
-            batch = validate_assignments(parsed.get("assignments"), target_ids, text, known, aliases, genders, hints,
-                                         beats)
+            try:
+                if response.get("done_reason") == "length":
+                    raise AnalysisError("The AI response reached its output limit.", "truncated", target_ids)
+                try:
+                    parsed = json.loads(response["message"]["content"])
+                except (KeyError, TypeError, json.JSONDecodeError) as error:
+                    raise AnalysisError("AI returned invalid JSON.", "invalid_json", target_ids) from error
+                batch = validate_assignments(parsed.get("assignments") if isinstance(parsed, dict) else None,
+                                             target_ids, text, known, aliases, genders, hints, beats)
+            except AnalysisError as error:
+                error.diagnostic.update(model=MODEL, batch=batch_number + 1, batches=len(batches),
+                                        batch_size=batch_size, done_reason=response.get("done_reason"))
+                raise
             assignments.extend(batch)
+            if proposals is not None:
+                for item in batch:
+                    if item['speaker'] and item['speaker'] not in genders:
+                        proposals[item['speaker']] = {k:item[k] for k in ('category','reason') if k in item}
             for item in batch:
                 if item["speaker"]:
                     # Later batches see these rows as already attributed context.

@@ -12,7 +12,7 @@ static class DesktopPolicy {
             return "AudioBookStudio."+BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(
                 Path.GetFullPath(root).TrimEnd('\\').ToUpperInvariant()))).Replace("-","");
     }
-    public static string StateFolder(string root) { return Path.Combine(root,".desktop"); }
+    public static string StateFolder(string root) { return InstallationPaths.At(root,"Data/State/desktop"); }
     public static bool Local(Uri origin,string address) {
         Uri target;
         return Uri.TryCreate(address,UriKind.Absolute,out target) && target.Scheme==origin.Scheme &&

@@ -19,7 +19,7 @@ OWNED = ['runtime/python/python.exe', '.venv/Scripts/python.exe', 'tools/ffmpeg/
 MODELS = ['models/model.gguf', 'models/ollama/blobs/sha256-abc', 'models/ollama/manifests/registry.ollama.ai/library/gemma4/12b']
 DATA = ['settings.json', 'characters.json', 'volumes.json', 'voices/registry.json', 'voices/narrator.wav',
         'work/passages/a.wav', 'export/Book/1.mp3']
-FOREIGN = ['AudioBookStudio-Setup.exe', 'Local Models/_place models here', 'my notes.txt']
+FOREIGN = ['AudioBookStudio-Setup.exe', 'models/_place models here', 'my notes.txt']
 
 
 def make_installation(root, foreign=True, payload_paths=None):
@@ -34,6 +34,30 @@ def make_installation(root, foreign=True, payload_paths=None):
     (root / 'installation-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
 
 
+def modern_installation(root):
+    make_installation(root)
+    manifest=json.loads((root/'installation-manifest.json').read_text())
+    def location(name):
+        if name in ('AudioBook Studio.exe',NAME): return name
+        if name.startswith('export/'): return 'Audiobooks/'+name[len('export/'):]
+        if name.startswith('.desktop/'): return 'Data/State/desktop/'+name[len('.desktop/'):]
+        if name.startswith('.downloads/'): return 'Data/State/downloads/'+name[len('.downloads/'):]
+        if name in ('install.log','startup.log'): return 'Data/State/logs/'+name
+        if name in DATA or name.startswith(('voices/','work/')): return 'Data/User/'+name
+        return 'Data/Program/'+name
+    for name in APP+OWNED+DATA:
+        dest=root/location(name)
+        if dest==root/name: continue
+        dest.parent.mkdir(parents=True,exist_ok=True); (root/name).rename(dest)
+    for key in ('payload_files','initial_state_files'):
+        for record in manifest[key]: record['path']=location(record['path'])
+    manifest['layout_version']=2
+    path=root/'Data/State/installation-manifest.json'
+    path.parent.mkdir(parents=True,exist_ok=True); path.write_text(json.dumps(manifest))
+    (root/'installation-manifest.json').unlink()
+    (root/'Backups').mkdir(); (root/'Backups/precious.abstudio').write_bytes(b'backup')
+
+
 class UninstallerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -42,12 +66,12 @@ class UninstallerTests(unittest.TestCase):
         cls.exe = cls.folder / NAME
         subprocess.run([str(CSC), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll',
-                        '/out:' + str(cls.exe), str(ROOT / 'installer/Uninstall.cs')], check=True, capture_output=True)
+                        '/out:' + str(cls.exe), str(ROOT / 'installer/Uninstall.cs'), str(ROOT / 'installer/InstallationPaths.cs')], check=True, capture_output=True)
         cls.setup = cls.folder / 'Setup.exe'
         subprocess.run([str(CSC), '/nologo', '/target:winexe', '/platform:x64', '/codepage:65001',
                         '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll',
                         '/reference:System.Web.Extensions.dll', '/out:' + str(cls.setup), str(ROOT / 'installer/Setup.cs'),
-                        str(ROOT / 'installer/DesktopRuntime.cs')],
+                        str(ROOT / 'installer/DesktopRuntime.cs'), str(ROOT / 'installer/InstallationPaths.cs')],
                        check=True, capture_output=True)
 
     @classmethod
@@ -72,15 +96,15 @@ class UninstallerTests(unittest.TestCase):
         make_installation(self.root)
         code, report = self.run_uninstaller()
         self.assertEqual(code, 0, report)
-        self.assertExist(APP + OWNED + MODELS + ['installation-manifest.json'], False)
-        self.assertExist(DATA + FOREIGN)
-        for folder in ('runtime', '.venv', 'tools', 'models', 'engine', 'web', 'licenses', '__pycache__'):
+        self.assertExist(APP + OWNED, False)
+        self.assertExist(DATA + FOREIGN + MODELS + ['installation-manifest.json'])
+        for folder in ('runtime', '.venv', 'tools', 'engine', 'web', 'licenses', '__pycache__'):
             self.assertFalse((self.root / folder).exists(), folder)
         self.assertFalse(report['deleted_data'])
 
     def test_deletes_user_data_only_on_request_and_never_foreign_files(self):
         make_installation(self.root)
-        code, report = self.run_uninstaller('--delete-data')
+        code, report = self.run_uninstaller('--delete-data','--delete-audiobooks')
         self.assertEqual(code, 0, report)
         self.assertExist(DATA, False)
         self.assertExist(FOREIGN)
@@ -88,7 +112,7 @@ class UninstallerTests(unittest.TestCase):
 
     def test_removes_the_folder_when_nothing_else_remains(self):
         make_installation(self.root, foreign=False)
-        code, report = self.run_uninstaller('--delete-data')
+        code, report = self.run_uninstaller('--delete-data','--delete-audiobooks','--delete-backups','--delete-models')
         self.assertEqual(code, 0, report)
         self.assertFalse(self.root.exists())
 
@@ -156,7 +180,7 @@ class UninstallerTests(unittest.TestCase):
         self.assertExist(DATA + FOREIGN)
 
     def test_removes_only_shortcuts_that_still_open_this_installation(self):
-        make_installation(self.root)
+        modern_installation(self.root)
         other = Path(self.work.name) / 'Other App'
         other.mkdir()
         desktop, programs = Path(self.work.name) / 'Desktop', Path(self.work.name) / 'Programs'
@@ -165,13 +189,46 @@ class UninstallerTests(unittest.TestCase):
         foreign = desktop / 'AudioBook Studio.lnk'                       # another installation's shortcut
         mine = [desktop / 'AudioBook Studio (AudioBook Studio).lnk', programs / 'AudioBook Studio.lnk']
         self.assertTrue(foreign.exists() and all(link.exists() for link in mine))
-        with (self.root / 'shortcuts.txt').open('a', encoding='utf-8') as listed:
+        with (self.root / 'Data/State/shortcuts.txt').open('a', encoding='utf-8') as listed:
             listed.write(str(foreign) + '\n')                             # listed, but it does not open this installation
         code, report = self.run_uninstaller()
         self.assertEqual(code, 0, report)
         self.assertFalse(any(link.exists() for link in mine))
         self.assertTrue(foreign.exists())
-        self.assertFalse((self.root / 'shortcuts.txt').exists())
+        self.assertFalse((self.root / 'Data/State/shortcuts.txt').exists())
+
+    def test_modern_uninstall_preserves_all_author_roots_and_reinstall_identity(self):
+        modern_installation(self.root)
+        code,report=self.run_uninstaller()
+        self.assertEqual(code,0,report)
+        self.assertFalse((self.root/'Data/Program').exists())
+        self.assertTrue((self.root/'Data/User/settings.json').exists())
+        self.assertTrue((self.root/'Audiobooks/Book/1.mp3').exists())
+        self.assertTrue((self.root/'Backups/precious.abstudio').exists())
+        self.assertExist(MODELS)
+        self.assertTrue((self.root/'Data/State/installation-manifest.json').exists())
+
+    def test_modern_data_deletion_does_not_delete_audiobooks_backups_or_models(self):
+        modern_installation(self.root)
+        code,report=self.run_uninstaller('--delete-data')
+        self.assertEqual(code,0,report)
+        self.assertFalse((self.root/'Data/User').exists())
+        self.assertTrue((self.root/'Audiobooks/Book/1.mp3').exists())
+        self.assertTrue((self.root/'Backups/precious.abstudio').exists())
+        self.assertExist(MODELS)
+
+    def test_modern_program_parent_link_is_refused_before_deleting_external_files(self):
+        modern_installation(self.root)
+        program=self.root/'Data/Program'
+        outside=Path(self.work.name)/'outside program'
+        program.rename(outside)
+        subprocess.run(['cmd','/c','mklink','/J',str(program),str(outside)],check=True,capture_output=True)
+        try:
+            code,report=self.run_uninstaller()
+            self.assertEqual(code,1,report)
+            self.assertTrue((outside/'app.py').exists())
+            self.assertTrue((self.root/'Data/User/settings.json').exists())
+        finally: program.rmdir()
 
     def test_removes_the_dialogue_model_of_a_compact_installation(self):
         make_installation(self.root)
@@ -183,10 +240,11 @@ class UninstallerTests(unittest.TestCase):
         library = self.root / 'models/ollama/manifests/registry.ollama.ai/library/gemma4'
         (library / '12b').rename(library / 'e4b-it-qat')   # a Compact installation has only its own model
         compact = library / 'e4b-it-qat'
-        code, report = self.run_uninstaller()
+        code, report = self.run_uninstaller('--delete-models')
         self.assertEqual(code, 0, report)
         self.assertFalse(compact.exists())
-        self.assertFalse((self.root / 'models').exists())
+        self.assertFalse(any((self.root/'models').rglob('*.gguf')))
+        self.assertTrue((self.root/'models/_place models here').exists())
         self.assertExist(DATA + FOREIGN)
 
     def test_dry_run_lists_without_removing(self):
@@ -194,7 +252,7 @@ class UninstallerTests(unittest.TestCase):
         code, report = self.run_uninstaller('--dry-run')
         self.assertEqual(code, 0, report)
         self.assertIn('runtime', report['planned'])
-        self.assertIn('models\\model.gguf', report['planned'])
+        self.assertNotIn('models\\model.gguf', report['planned'])
         self.assertExist(APP + OWNED + MODELS + DATA)
 
     def test_runs_from_a_temporary_copy_and_removes_its_own_exe(self):

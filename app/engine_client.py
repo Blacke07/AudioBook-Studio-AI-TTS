@@ -11,12 +11,13 @@ from urllib.request import Request, urlopen
 import model_profile
 from voices import BASE_CLONE, CLONE_TIMBRE, MODEL_FILES, voice_parameters
 
-ROOT = Path(__file__).resolve().parent
+from project import LAYOUT
+ROOT = LAYOUT.program
 BUILD = ROOT / "engine" / "build"
 CUDA = ROOT / "engine" / "cuda"
 BASE_URL = "http://127.0.0.1:7864"
-CODEC = ROOT / "models" / model_profile.CURRENT["codec"]
-LOG = ROOT / "engine.log"
+CODEC = LAYOUT.models / model_profile.CURRENT["codec"]
+LOG = LAYOUT.state / 'logs/engine.log' if LAYOUT.installed else ROOT/'engine.log'
 # Concurrent passages on the GPU. Measured 20.10.2026 on 8 passages: batch 1 RTF 0.42, batch 4 RTF 1.55
 # (slower) and different audio for the same seed, so passages are generated one at a time.
 MAX_BATCH = 1
@@ -110,7 +111,7 @@ def ensure_engine(mode):
     global _process, _log_handle, _current_model
     if mode not in MODEL_FILES:
         raise ValueError("Unknown Qwen model.")
-    model = ROOT / "models" / MODEL_FILES[mode]
+    model = LAYOUT.models / MODEL_FILES[mode]
     for path in (model, CODEC, BUILD / "tts-server.exe"):
         if not path.is_file():
             raise FileNotFoundError(f"Required file is missing: {path}")

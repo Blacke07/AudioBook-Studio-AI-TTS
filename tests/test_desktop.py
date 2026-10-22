@@ -54,7 +54,7 @@ class DesktopTests(unittest.TestCase):
                 '/resource:' + str(icon) + ',app.ico', '/out:' + str(cls.probe),
                 str(ROOT / 'tests/DesktopProbe.cs')]
         args += [str(ROOT / 'installer' / name) for name in
-                 ('AppLauncher.cs', 'WindowsJob.cs', 'DesktopPolicy.cs', 'DesktopRuntime.cs', 'StudioWebView.cs')]
+                 ('InstallationPaths.cs', 'AppLauncher.cs', 'WindowsJob.cs', 'DesktopPolicy.cs', 'DesktopRuntime.cs', 'StudioWebView.cs')]
         result = subprocess.run(args, capture_output=True)
         if result.returncode:
             raise RuntimeError(result.stdout.decode('utf-8', errors='replace'))
@@ -63,6 +63,19 @@ class DesktopTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.temp.cleanup()
+
+    def test_installed_entry_resolves_sdk_from_program_without_root_dlls(self):
+        with TemporaryDirectory(prefix='Studio layout host ') as folder:
+            root=Path(folder); program=root/'Data/Program'; program.mkdir(parents=True)
+            shutil.copyfile(self.folder/'AudioBook Studio.exe',root/'AudioBook Studio.exe')
+            for file in self.folder.glob('*.dll'): shutil.copyfile(file,program/file.name)
+            for name in ('.venv/Scripts/python.exe','launcher.py','app.py'):
+                path=program/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(b'fixture')
+            state=root/'Data/State'; state.mkdir(parents=True)
+            (state/'installation-manifest.json').write_text('{}')
+            self.assertFalse(list(root.glob('*.dll')))
+            result=subprocess.run([str(root/'AudioBook Studio.exe'),'--check-installation'],capture_output=True,timeout=15)
+            self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
 
     def test_origin_boundaries_profile_identity_busy_queue_and_offscreen_placement(self):
         result = subprocess.run([str(self.probe), 'policy'], capture_output=True, timeout=10)
@@ -104,8 +117,8 @@ class DesktopTests(unittest.TestCase):
                                                          'queued': int(mode in ('queued', 'browser-queued'))}))
             (root / 'fake_server.py').write_text(SERVER, encoding='utf-8')
             if mode == 'restore':
-                (root / '.desktop').mkdir()
-                (root / '.desktop/window.json').write_text('[20,30,900,650,0]')
+                (root / 'Data/State/desktop').mkdir(parents=True)
+                (root / 'Data/State/desktop/window.json').write_text('[20,30,900,650,0]')
             process = subprocess.Popen([str(self.probe), mode, str(root), sys.executable, f'http://127.0.0.1:{port}/'],
                                        creationflags=subprocess.CREATE_NO_WINDOW)
             owned = []
@@ -125,8 +138,8 @@ class DesktopTests(unittest.TestCase):
                 if mode != 'crash':
                     self.assertEqual(process.returncode, 0, (root / 'failure.txt').read_text() if (root / 'failure.txt').exists() else '')
                     self.assertEqual((root / 'result.txt').read_text(), str(decisions))
-                    self.assertTrue((root / '.desktop/window.json').exists())
-                    self.assertNotIn('did not exit after disposal', (root / 'startup.log').read_text(encoding='utf-8'))
+                    self.assertTrue((root / 'Data/State/desktop/window.json').exists())
+                    self.assertNotIn('did not exit after disposal', (root / 'Data/State/logs/startup.log').read_text(encoding='utf-8'))
                     if mode in ('busy', 'queued'):
                         self.assertTrue((root / 'cancel-preserved.txt').exists())
                     if mode == 'unknown':
@@ -135,14 +148,14 @@ class DesktopTests(unittest.TestCase):
                         self.assertTrue((root / 'activation-restored.txt').exists())
                     if mode.startswith('browser-'):
                         self.assertTrue((root / 'recovery-preserved.txt').exists())
-                        log = (root / 'startup.log').read_text(encoding='utf-8')
+                        log = (root / 'Data/State/logs/startup.log').read_text(encoding='utf-8')
                         self.assertIn('backend has been kept running', log)
                 child = int((root / 'child.pid').read_text())
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:
                     browser = [p for p in psutil.process_iter(['pid', 'name', 'cmdline'])
                                if 'msedgewebview2' in (p.info['name'] or '').lower()
-                               and str(root / '.desktop/WebView2').lower() in ' '.join(p.info['cmdline'] or []).lower()]
+                               and str(root / 'Data/State/desktop/WebView2').lower() in ' '.join(p.info['cmdline'] or []).lower()]
                     living = [p for p in owned if p.is_running()]
                     if not browser and not psutil.pid_exists(child) and not living:
                         break
@@ -159,7 +172,7 @@ class DesktopTests(unittest.TestCase):
                 while time.monotonic() < deadline:
                     remaining = [p for p in psutil.process_iter(['pid', 'name', 'cmdline'])
                                  if 'msedgewebview2' in (p.info['name'] or '').lower()
-                                 and str(root / '.desktop/WebView2').lower() in ' '.join(p.info['cmdline'] or []).lower()]
+                                 and str(root / 'Data/State/desktop/WebView2').lower() in ' '.join(p.info['cmdline'] or []).lower()]
                     if not remaining:
                         break
                     time.sleep(.1)

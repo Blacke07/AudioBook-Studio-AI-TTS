@@ -1,7 +1,7 @@
 """One background worker that runs the queue: analyze all, then generate, then export.
 
-Analysis of every queued chapter happens first so Gemma loads once; then Qwen generates chapter after
-chapter. A chapter that still needs the author (lines to attribute) is skipped and reported, never guessed.
+Analysis happens first so Gemma loads once. Every chapter in the requested batch must finish text review
+before audio starts; every chapter needs current audio before export or video.
 """
 from collections import deque
 from contextlib import contextmanager
@@ -31,12 +31,14 @@ class Worker:
         threading.Thread(target=self._loop, name="audiobook-worker", daemon=True).start()
 
     # -- interface for the web server -------------------------------------------------------------
-    def submit(self, volume, stems, steps, force_analysis=False, automatic=False):
+    def submit(self, volume, stems, steps, force_analysis=False, automatic=False, analysis_mode="normal"):
+        if analysis_mode not in ("normal", "small_batches"):
+            raise ValueError("Unknown analysis repair mode.")
         with self._wake:
             if self._transfers:
                 raise ValueError('A project transfer is in progress. Start the job after it finishes.')
             self._jobs.append({"volume": volume, "stems": list(stems), "steps": list(steps),
-                               "force": force_analysis, "automatic": automatic})
+                               "force": force_analysis, "automatic": automatic, "analysis_mode": analysis_mode})
             self._wake.notify()
         self._log(f"Queued: {volume} · {len(stems)} chapters · {', '.join(steps)}")
 
@@ -55,10 +57,10 @@ class Worker:
 
     # -- internals ---------------------------------------------------------------------------------
     @contextmanager
-    def idle_guard(self):
+    def idle_guard(self, activity="transferring a project"):
         with self._wake:
             if self._state.get("running") or self._jobs:
-                raise ValueError("Stop the queue and wait for it to finish before transferring a project.")
+                raise ValueError(f"Stop the queue and wait for it to finish before {activity}.")
             self._transfers += 1
         try:
             yield
@@ -97,24 +99,28 @@ class Worker:
         settings = project.load_settings()
         volume = job["volume"]
         chapters = {chapter.stem: chapter for chapter in project.chapters(volume)}
-        selected = [chapters[stem] for stem in job["stems"] if stem in chapters]
+        if not job["stems"] or set(job["stems"]) - chapters.keys():
+            raise ValueError("The requested chapter batch is empty or has changed. Select the chapters again.")
+        selected = [chapters[stem] for stem in job["stems"]]
         steps = list(job["steps"])
         if job.get("automatic") and settings["video"]["enabled"] and "video" not in steps:
             steps.append("video")
 
-        if "analyze" in steps and settings["multi_voice"]:
+        if "analyze" in steps:
             rows = glossary.load()
             todo = [chapter for chapter in selected
-                    if job["force"] or pipeline.needs_analysis(pipeline.status(chapter, settings, rows)[0])]
+                    if job["force"] or not pipeline.status(chapter, settings, rows)[1].get("text_ready")]
             self._set(phase="Analyzing dialogue", total=len(todo), done=0)
             try:
                 for index, chapter in enumerate(todo):
                     if self._stop.is_set():
                         return
                     self._set(chapter=chapter.stem, done=index, fraction=index / max(len(todo), 1),
-                              message="Gemma is identifying speakers")
+                              message="Gemma is identifying speakers" if settings["multi_voice"] else "Preparing text")
                     try:
-                        _, _, added = pipeline.analyze(chapter, True, settings, release=False)
+                        mode = job.get("analysis_mode", "normal")
+                        _, _, added = pipeline.analyze(chapter, True, settings, release=False,
+                                                       repair=mode == "small_batches")
                         script = chapter.script()
                         unclear = project.unclear_count(script)
                         self._log(f"Analyzed {chapter.stem}: {unclear} needs review"
@@ -122,17 +128,17 @@ class Worker:
                     except Exception as error:
                         self._fail(chapter, "analysis", error)
             finally:
-                release_model()
+                if settings["multi_voice"]:
+                    release_model()
 
         if "render" in steps:
+            if self._blocked(selected, settings, "render"):
+                return
             rows = glossary.load()
             todo = []
             for chapter in selected:
                 state, details = pipeline.status(chapter, settings, rows)
                 if state in ("generated", "exported"):
-                    continue
-                if state in ("new", "modified", "needs_review"):
-                    self._log(f"Skipped {chapter.stem}: {details.get('reason', pipeline.STATES[state])}")
                     continue
                 todo.append((chapter, details.get("remaining_seconds", details["estimated_seconds"])))
             remaining = sum(seconds for _, seconds in todo)
@@ -173,10 +179,10 @@ class Worker:
                           + (f", {flagged} lines to review by listening" if flagged else "")
                           + (f"; voices checked {checks['checked']}, regenerated {checks['redone']}"
                              if checks.get("checked") else ""))
-                if "export" in steps:
-                    self._export(chapter, settings)
 
         if "export" in steps:
+            if self._blocked(selected, settings, "export"):
+                return
             for chapter in selected:
                 if self._stop.is_set():
                     return
@@ -184,6 +190,8 @@ class Worker:
                     self._export(chapter, settings)
 
         if "volume" in steps:
+            if self._blocked(list(chapters.values()), settings, "export"):
+                return
             self._set(phase="Exporting the volume", chapter="", message="Preparing the complete audiobook")
             try:
                 target, count, seconds = export.export_volume(volume, settings,
@@ -193,6 +201,8 @@ class Worker:
                 self._log(f"Volume export failed: {error}")
 
         if "video" in steps:
+            if self._blocked(selected, settings, "video"):
+                return
             rows = glossary.load()
             todo = []
             for chapter in selected:
@@ -232,6 +242,15 @@ class Worker:
                     self._fail(chapter, "video", error)
 
         self._log("Done." if not self._stop.is_set() else "Stopped.")
+
+    def _blocked(self, chapters, settings, step):
+        try:
+            pipeline.require_ready(chapters, settings, step)
+        except ValueError as error:
+            self._log(f"Batch waiting: {error}")
+            self._set(message=str(error))
+            return True
+        return False
 
     def _export(self, chapter, settings):
         self._set(message=f"Export {settings['export_format'].upper()}")

@@ -7,7 +7,8 @@ from threading import RLock
 
 from voices import CHARACTER_PROFILES, CUSTOM_POOLS, character_variants, custom_speaker, describe
 
-GLOSSARY_FILE = Path(__file__).with_name("characters.json")
+from project import ROOT
+GLOSSARY_FILE = ROOT / 'characters.json'
 COLUMNS = ["Character", "Aliases", "Gender", "Context for speaker detection", "Model", "CustomVoice speaker",
            "VoiceDesign profile or description", "Variation"]
 GENDERS = {"male": "male", "female": "female", "unknown": "unknown"}
@@ -98,11 +99,24 @@ def save(rows):
     return rows
 
 
-def to_data(rows):
-    return {"version": 2, "characters": [{
+def to_data(rows, read_as=None):
+    from voice_rules import explicit_rules, validate_targets
+    rules = explicit_rules() if read_as is None else read_as
+    names = {row[0] for row in rows}
+    rules = {name:target for name,target in rules.items() if name in names}
+    validate_targets(rules, names)
+    result = {"version": 2, "characters": [{
         "name": name, "aliases": aliases_of(aliases), "gender": GENDERS[gender], "note": note, "model": model,
         "custom_voice": custom, "voice_design": design, "seed": seed,
+        **({"read_as":rules[name]} if name in rules else {}),
     } for name, aliases, gender, note, model, custom, design, seed in rows]}
+    source = json.loads(GLOSSARY_FILE.read_text(encoding='utf-8')) if GLOSSARY_FILE.exists() else {}
+    if isinstance(source, dict) and 'organization' in source:
+        from character_registry import organization
+        metadata = source['organization']
+        result['organization'] = {**metadata, 'characters': {k:v for k,v in metadata.get('characters', {}).items() if k in names}}
+        result['organization'] = organization(result)
+    return result
 
 
 def _write(rows):

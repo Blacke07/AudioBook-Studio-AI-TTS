@@ -55,7 +55,8 @@ All new files and preimages are staged under `projects-state/transaction`; a per
 preimages after an error or an interrupted process, before the next server starts serving requests.
 An unresolved recovery error prevents startup rather than hiding a partial import.
 
-Automatic backups are stored in `projects-backup/<timestamp>-<id>.abstudio`. They contain the full private
+Automatic backups are stored in `Backups/Projects/<timestamp>-<id>.abstudio` in an installation
+(`projects-backup` in a development checkout). They contain the full private
 project state, including book example lines. Internal `_snapshot_existing` metadata records which files
 actually existed, allowing exact restoration of absent files as well as existing files. This metadata is
 used only for the application's own digest-verified Undo backup, not for normal imports.
@@ -69,3 +70,24 @@ files can enter the public source or installer allowlists.
 Preview tokens expire after 30 minutes and are single-use for successful application. Reopen/refresh a
 preview after editing the project. Save/Open use native dialogs; there are no browser uploads and no
 additional multipart dependency. Installation is a separate step.
+
+## Reading-voice metadata
+
+A character may contain `read_as` naming Narrator or another existing character. Absent inherits its category policy, then own voice for legacy data. A script may contain `voice_rules.characters` (chapter exceptions), `voice_rules.lines` (row, speaker, text_hash, source_hash, read_as), and `voice_rules.conflicts` (stale overrides requiring review). Line text hashes use SHA-256 of the JSON-encoded text; source_hash retains the existing chapter hash. Targets use their own voices; rules never chain. Import keeps existing character rules unless that character is explicitly replaced. These optional fields do not change the archive container version.
+
+## Spoken-text overrides
+
+Scripts may contain `spoken_text.lines` entries with `row`, `speaker`, `text_hash`, `source_hash` and `text`. The original `rows` remain byte-for-byte unchanged at the string level. Hashes bind each edit to its original text, speaker and chapter source; `text_hash` uses the same JSON/SHA-256 digest as line voice rules. Stale entries move to `spoken_text.conflicts` and require explicit review. The original-source comparison on import is unchanged; overrides are validated separately. Exports containing assignments also contain these spoken versions and must remain private when they contain book text.
+
+
+## Character registry
+
+Version 2 glossaries may include an optional `organization` object alongside `characters`:
+
+- `categories`: ordered records with stable `id`, display `name`, `description`, and `voice` (`own`, `Narrator`, or an existing character reference). `uncategorized` must remain present.
+- `characters`: metadata keyed by stable character identity: `category`, `status` (`approved`, `provisional`, `needs_review`), video `label`, volume `scope`, and evidence `reason`.
+- `allow_provisional`: explicit permission to render provisional identities; false by default. It never resolves an Unassigned speaker or permits Needs review identities.
+
+Absent metadata preserves legacy character behavior. The first registry migration preserves existing fixed references as explicit own-voice choices. Changing category order or descriptions does not change passage keys. Video labels affect video fingerprints, not audio keys. Inherited category voices require a fixed reference; explicit chapter and line choices remain higher priority.
+
+New analysis identities are scoped to the volume. Their internal stable names may carry a scope suffix; the video label remains readable. JSON imports are validated and staged, keep existing identities, and mark new characters for reference review because JSON contains no WAV recordings. Project packages preserve organization metadata and fixed recordings, keeping the receiving installation's provisional-reading permission. Merge rewrites speaker references transactionally, refuses conflicting chapter policies, keeps the target voice, and leaves old reference WAVs on disk. Only active references are included in subsequent exports.

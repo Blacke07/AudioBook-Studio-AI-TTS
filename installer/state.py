@@ -38,4 +38,4 @@ def check_initial(root, expected):
             raise ValueError('Missing or invalid initial configuration file: ' + name)
         if hashlib.sha256(file.read_bytes()).hexdigest() != item['sha256']:
             raise ValueError('Initial configuration differs from the release: ' + name)
-    collect(root)
+    collect(root/'Data/User' if any(item['path'].startswith('Data/User/') for item in expected) else root)

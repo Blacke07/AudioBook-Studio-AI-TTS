@@ -10,8 +10,10 @@ try {
     $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Read)
     try {
         foreach ($entry in $archive.Entries) {
-            if (-not $entry.FullName.StartsWith('engine/')) { continue }
-            $destination = [IO.Path]::GetFullPath((Join-Path $nativeRoot $entry.FullName))
+            $member = $entry.FullName
+            if ($member.StartsWith('Data/Program/')) { $member = $member.Substring('Data/Program/'.Length) }
+            if (-not $member.StartsWith('engine/')) { continue }
+            $destination = [IO.Path]::GetFullPath((Join-Path $nativeRoot $member))
             if (-not $destination.StartsWith($nativeRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid archive path.' }
             if (Test-Path -LiteralPath $destination) { throw "The file already exists: $destination. Refusing to overwrite it." }
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null

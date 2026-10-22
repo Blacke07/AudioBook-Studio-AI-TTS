@@ -25,7 +25,8 @@ def native_dialog(kind):
             root = tkinter.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
-            options = dict(parent=root, filetypes=[('AudioBook Studio project','*.abstudio')])
+            options = dict(parent=root, filetypes=[('AudioBook Studio project','*.abstudio')],
+                           initialdir=str(project.LAYOUT.backups))
             result['path'] = (filedialog.asksaveasfilename(title='Export project', defaultextension='.abstudio', confirmoverwrite=False,
                 initialfile=f'AudioBook-project-{datetime.now():%Y-%m-%d}.abstudio', **options) if kind=='save'
                 else filedialog.askopenfilename(title='Open project', **options))

@@ -106,6 +106,7 @@ class Chunk:
     pause_after: float
     line: int = -1
     variant: int = 0
+    voice_role: str = ""
 
 
 def plan_chunks(lines, voices, dialogue_pause):
@@ -113,7 +114,7 @@ def plan_chunks(lines, voices, dialogue_pause):
     for index, line in enumerate(lines):
         if line.role == PAUSE:
             continue
-        if line.role not in voices:
+        if (line.voice_role or line.role) not in voices:
             raise ValueError(f"Character «{line.role}» has no voice in the glossary.")
         passages = split_passages(line.text)
         for part, (passage, _) in enumerate(passages):
@@ -123,17 +124,17 @@ def plan_chunks(lines, voices, dialogue_pause):
                 pause = boundary_pause(line, lines[index + 1], dialogue_pause)
             else:
                 pause = 0.0
-            chunks.append(Chunk(line.role, passage, pause, line.row if line.row >= 0 else index, line.variant))
+            chunks.append(Chunk(line.role, passage, pause, line.row if line.row >= 0 else index, line.variant, line.voice_role))
     return chunks
 
 
 def generation_order(chunks, voices):
     """Indices grouped by model, the already loaded model first: at most one model switch per chapter."""
-    modes = list(dict.fromkeys(voices[chunk.role].mode for chunk in chunks))
+    modes = list(dict.fromkeys(voices[chunk.voice_role or chunk.role].mode for chunk in chunks))
     if engine_client._current_model in modes:
         modes.remove(engine_client._current_model)
         modes.insert(0, engine_client._current_model)
-    return [index for mode in modes for index, chunk in enumerate(chunks) if voices[chunk.role].mode == mode]
+    return [index for mode in modes for index, chunk in enumerate(chunks) if voices[chunk.voice_role or chunk.role].mode == mode]
 
 
 def passage_key(chunk, voice, temperature):
@@ -155,36 +156,56 @@ class NotReady(ValueError):
     """The chapter needs the author (analysis missing, text changed or lines to attribute)."""
 
 
-def chapter_plan(chapter, settings, glossary_rows=None, text=None):
+def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_rules=None, script_override=None, registry_document=None):
     """The ordered passages of a chapter with their voices and keys, from its saved script."""
     text = chapter.text() if text is None else text
     narrator = narrator_voice(settings)
     if settings["multi_voice"]:
-        script = chapter.script()
+        script = script_override if script_override is not None else chapter.script()
         if script is None:
             raise NotReady("This chapter has not been analyzed.")
         if script["source_hash"] != project.text_hash(text):
             raise NotReady("The chapter text changed after analysis. Analyze it again.")
+        from character_registry import check_reading
+        try:
+            check_reading(script, registry_document)
+        except ValueError as error:
+            raise NotReady(str(error)) from error
         rows = [list(row) for row in script["rows"]]
         if settings["unclear_policy"] == "narrator":
             rows = [[NARRATOR, *row[1:]] if row[0] == UNASSIGNED else row for row in rows]
         elif any(row[0] == UNASSIGNED for row in rows):
             raise NotReady(f"{sum(row[0] == UNASSIGNED for row in rows)} lines need you to choose a speaker.")
         lines = read_script(text, True, rows, text)
-        if settings.get("speech_tags", "omit_fixed") == "omit_fixed":
-            lines, _ = drop_simple_tags(lines, set(fixed_voices.load()))
-        speakers = {line.role for line in lines if line.role not in (NARRATOR, PAUSE)}
         rows_glossary = glossary.load() if glossary_rows is None else glossary_rows
+        from voice_rules import resolve
+        lines = resolve(lines, script, rows_glossary, routing_rules)
+        from character_registry import check_category_references
+        check_category_references(lines, registry_document)
+        from spoken_text import apply_lines
+        lines = apply_lines(lines, script)
+        if settings.get("speech_tags", "omit_fixed") == "omit_fixed":
+            fixed = set(fixed_voices.load())
+            lines, _ = drop_simple_tags(lines, lambda line: line.role in fixed and line.voice_role == line.role)
+        speakers = {line.voice_role or line.role for line in lines if line.role != PAUSE and (line.voice_role or line.role) != NARRATOR}
         # "same as narrator" means the narrator's recipe model, not his fixed clone.
         voices = read_cast(rows_glossary, MODEL_NAMES[settings["narrator"]["mode"]], narrator, speakers)
     else:
-        lines = read_script(text, False, None, "")
+        script = script_override if script_override is not None else chapter.script()
+        if script and script.get('spoken_text'):
+            if script['source_hash'] != project.text_hash(text):
+                raise NotReady('The source changed after spoken-text editing. Prepare the chapter again.')
+            from spoken_text import apply_lines
+            rows = [[PAUSE if row[0] == PAUSE else NARRATOR, *row[1:]] for row in script['rows']]
+            lines = apply_lines(read_script(text, True, rows, text), script)
+        else:
+            lines = read_script(text, False, None, "")
         voices = {NARRATOR: narrator}
     chunks = plan_chunks(lines, voices, settings["dialogue_pause"])
     if settings["announce_titles"]:
         chunks.insert(0, Chunk(NARRATOR, project.announcement(chapter.stem), SCENE_PAUSE))
     temperature = settings["narrator"]["temperature"]
-    keys = [passage_key(chunk, voices[chunk.role], temperature) for chunk in chunks]
+    keys = [passage_key(chunk, voices[chunk.voice_role or chunk.role], temperature) for chunk in chunks]
     return chunks, voices, keys
 
 
@@ -209,15 +230,15 @@ def render_checked(chunk, voice, temperature, key, references):
     keeping the best one. Writes the passage WAV and a .qc.json with the verdict."""
     target = passage_file(key)
     attempts = []
-    for attempt in range(1 + (VOICE_RETRIES if chunk.role in references else 0)):
+    for attempt in range(1 + (VOICE_RETRIES if (chunk.voice_role or chunk.role) in references else 0)):
         with LOCK:
             audio = generate(chunk.text, voice, temperature, chunk.variant + 1000 * attempt)
         temporary = target.with_name(f"{key}.try{attempt}.wav")
         sf.write(temporary, audio, RATE, subtype="PCM_16")
         verdict = None
-        if chunk.role in references and audio.size / RATE >= voice_check.MIN_SECONDS:
-            others = {name: path for name, path in references.items() if name != chunk.role}
-            verdict = voice_check.judge(temporary, references[chunk.role], others)
+        if (chunk.voice_role or chunk.role) in references and audio.size / RATE >= voice_check.MIN_SECONDS:
+            others = {name: path for name, path in references.items() if name != (chunk.voice_role or chunk.role)}
+            verdict = voice_check.judge(temporary, references[chunk.voice_role or chunk.role], others)
         attempts.append((verdict["margin"] if verdict else 1.0, attempt, temporary, verdict))
         if verdict is None or verdict["margin"] >= voice_check.MIN_MARGIN:
             break
@@ -245,7 +266,7 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
             return None
         chunk = chunks[index]
         progress(len(chunks) - len(order) + done, len(chunks), f"{chunk.role}: {chunk.text[:60]}")
-        render_checked(chunk, voices[chunk.role], temperature, keys[index], references)
+        render_checked(chunk, voices[chunk.voice_role or chunk.role], temperature, keys[index], references)
     progress(len(chunks), len(chunks), "Assembling the chapter")
     chapter.work.mkdir(parents=True, exist_ok=True)
     temporary = chapter.audio_file.with_suffix(".tmp.wav")
@@ -264,7 +285,7 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
             if suspicious(speakable(chunk.text), length) or check.get("drifting"):
                 flagged.add(chunk.line)
             passages.append({"role": chunk.role, "text": chunk.text, "line": chunk.line, "key": key,
-                             "start": round(seconds, 3), "seconds": round(length, 3)})
+                             "voice_role": chunk.voice_role or chunk.role, "start": round(seconds, 3), "seconds": round(length, 3)})
             output.write(audio)
             seconds += length
             if chunk.pause_after:

@@ -13,11 +13,11 @@ print(f'Model set: {profile["label"]}\n')
 files = dict.fromkeys(profile[key] for key in ('voice_design', 'custom_voice', 'base', 'codec'))
 for item in manifest['models']:
     if item['name'] in files:
-        print('Local Models/' + item['name'])
+        print('models/' + item['name'])
         print(item['url'])
         print('SHA-256: ' + item['sha256'] + '\n')
 repository = profile['gemma'].split(':')[0]
 for item in manifest['gemma_models'][profile['gemma']]['blobs']:
-    print('Local Models/ollama/blobs/' + item['digest'].replace(':', '-'))
+    print('models/ollama/blobs/' + item['digest'].replace(':', '-'))
     print(f'https://registry.ollama.ai/v2/library/{repository}/blobs/' + item['digest'])
     print('SHA-256: ' + item['digest'].split(':')[1] + '\n')

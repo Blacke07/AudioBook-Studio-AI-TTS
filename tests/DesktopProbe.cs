@@ -23,7 +23,7 @@ class DesktopProbe {
             Check(!DesktopPolicy.Busy(false,0) && DesktopPolicy.Busy(false,1) && DesktopPolicy.Busy(true,0),"Busy decision");
             Check(DesktopPolicy.Identity(@"C:\Books !\café")==DesktopPolicy.Identity(@"c:\books !\CAFÉ\"),"Install identity");
             Check(DesktopPolicy.Identity(@"C:\Books")!=DesktopPolicy.Identity(@"D:\Books"),"Different installs share identity");
-            Check(DesktopPolicy.StateFolder(@"C:\Books !\café")==@"C:\Books !\café\.desktop","Profile path");
+            Check(DesktopPolicy.StateFolder(@"C:\Books !\café")==@"C:\Books !\café\Data\State\desktop","Profile path");
             Check(DesktopPolicy.Fit(new Rectangle(-5000,-4000,1400,900),new Rectangle(0,0,1280,720))==new Rectangle(0,0,1280,720),"Offscreen placement");
             Check(!DesktopRuntime.ValidVersion(null) && !DesktopRuntime.ValidVersion("0.0.0.0") && !DesktopRuntime.ValidVersion("broken") && DesktopRuntime.ValidVersion("155.0.1.2"),"Runtime version detection");
             Console.WriteLine("POLICY_OK"); return 0;

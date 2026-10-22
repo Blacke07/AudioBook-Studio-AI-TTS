@@ -176,15 +176,56 @@ class VideoTests(unittest.TestCase):
             self.assertNotEqual(key, video.cache_key(audio, script, meta, settings, volume="Volume", title="Chapter"))
 
     def test_encoder_probe_uses_hardware_only_when_it_works(self):
-        self.addCleanup(video.choose_encoder.cache_clear)
-        for returncode, expected in [(0, 'h264_nvenc'), (1, 'libx264')]:
-            video.choose_encoder.cache_clear()
-            with patch.object(video, 'run_ffmpeg', return_value=subprocess.CompletedProcess([], returncode)) as probe:
+        self.addCleanup(video._probe_codec.cache_clear)
+        for results, expected in [([0], 'h264_nvenc'), ([1, 0], 'libx264')]:
+            video._probe_codec.cache_clear()
+            with patch.object(video, 'run_ffmpeg', side_effect=[subprocess.CompletedProcess([], code) for code in results]) as probe:
                 self.assertEqual(video.choose_encoder(), expected)
                 self.assertEqual(video.choose_encoder(), expected)
-                self.assertEqual(probe.call_count, 1)
+                self.assertEqual(probe.call_count, len(results))
         self.assertIn('h264_nvenc', video.encoding_args('h264_nvenc'))
         self.assertIn('libx264', video.encoding_args('libx264'))
+
+    def test_codec_validation_and_legacy_cache_key(self):
+        self.assertEqual(video.VideoSettings.from_dict({}).codec, 'h264')
+        for invalid in ('hevc', 'H264', '', None, [], 1, True):
+            with self.assertRaises(ValueError):
+                video.VideoSettings.from_dict({'codec': invalid})
+        script, meta = fixture()
+        with TemporaryDirectory() as folder:
+            audio = Path(folder)/'fixture.bin'
+            audio.write_bytes(b'legacy-video-cache-fixture')
+            keys = [video.cache_key(audio, script, meta, video.VideoSettings(codec=codec),
+                                    volume='Volume', title='Chapter') for codec in video.CODECS]
+        # Measured from the pre-codec video.py (SHA256 dde029ce46d28d2b6091c9e060a080abdb054d2aa1e9a86c6a9b6875e8deb7ee).
+        self.assertEqual(keys[0], 'a37feda21553e6a6ddc35931891aa0a6e966b1857658f51c669daa7dee3275d8')
+        self.assertEqual(len(set(keys)), 3)
+
+    def test_advanced_codecs_never_fall_back_and_cache_failed_probes(self):
+        self.addCleanup(video._probe_codec.cache_clear)
+        for codec, encoder in [('h265', 'hevc_nvenc'), ('av1', 'av1_nvenc')]:
+            video._probe_codec.cache_clear()
+            with patch.object(video, 'run_ffmpeg', return_value=subprocess.CompletedProcess([], 1)) as probe:
+                for _ in range(2):
+                    with self.assertRaisesRegex(RuntimeError, 'NVENC'):
+                        video.choose_encoder(codec)
+                self.assertEqual(probe.call_count, 1)
+                self.assertIn(encoder, probe.call_args.args[0])
+            video._probe_codec.cache_clear()
+            with patch.object(video, 'run_ffmpeg', return_value=subprocess.CompletedProcess([], 0)):
+                self.assertEqual(video.choose_encoder(codec), encoder)
+            args = video.encoding_args(encoder)
+            self.assertIn('p4', args)
+            if codec == 'h265':
+                self.assertEqual(args[-2:], ['-tag:v', 'hvc1'])
+
+    def test_capabilities_report_missing_ffmpeg_without_claiming_cpu_support(self):
+        video._probe_codec.cache_clear()
+        self.addCleanup(video._probe_codec.cache_clear)
+        with patch.object(video, 'run_ffmpeg', side_effect=RuntimeError('FFmpeg is not available.')) as probe:
+            self.assertTrue(all(not info['available'] for info in video.codec_capabilities().values()))
+            video.codec_capabilities()
+            self.assertEqual(probe.call_count, 4)
 
     def test_context_preview_does_not_fade_the_second_line(self):
         text = 'word ' * 40
@@ -278,6 +319,41 @@ class VideoTests(unittest.TestCase):
             self.assertAlmostEqual(float(probe['format']['duration']), duration, delta=.1)
             with self.assertRaises(FileExistsError):
                 video.render_clip(renderer, audio, output, seconds=duration)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg/FFprobe unavailable')
+    def test_actual_available_advanced_codecs(self):
+        capabilities = video.codec_capabilities()
+        available = [codec for codec in ('h265', 'av1') if capabilities[codec]['available']]
+        if not available:
+            self.skipTest('Neither advanced NVENC encoder can run on this computer.')
+        with TemporaryDirectory(prefix='video-codecs-') as folder:
+            folder = Path(folder)
+            audio = folder/'tone.wav'
+            sf.write(audio, .03*np.sin(2*np.pi*220*np.arange(48000)/24000), 24000)
+            script, meta = fixture()
+            meta['passages'] = meta['passages'][:1]
+            for codec in available:
+                with self.subTest(codec=codec):
+                    renderer = video.Renderer(video.Timeline(script, meta, 2), 'Synthetic volume', 'Codec test',
+                                              video.VideoSettings(codec=codec, width=1280, height=720))
+                    output = folder/f'{codec}.mp4'
+                    video.render_clip(renderer, audio, output)
+                    probe = json.loads(subprocess.check_output([shutil.which('ffprobe'), '-v', 'error',
+                        '-show_streams', '-show_format', '-of', 'json', str(output)]))
+                    streams = {item['codec_type']: item for item in probe['streams']}
+                    v, a = streams['video'], streams['audio']
+                    self.assertEqual(v['codec_name'], 'hevc' if codec == 'h265' else 'av1')
+                    self.assertEqual(v['pix_fmt'], 'yuv420p')
+                    self.assertEqual((v['width'], v['height'], v['r_frame_rate']), (1280, 720, '30/1'))
+                    self.assertEqual([v[key] for key in ('color_space', 'color_primaries', 'color_transfer', 'color_range')],
+                                     ['bt709', 'bt709', 'bt709', 'tv'])
+                    if codec == 'h265':
+                        self.assertEqual(v['codec_tag_string'], 'hvc1')
+                    self.assertEqual(int(v['nb_frames']), 60)
+                    self.assertAlmostEqual(float(v['duration']), 2, delta=1/30)
+                    self.assertAlmostEqual(float(a['duration']), 2, delta=.05)
+                    self.assertEqual(a['codec_name'], 'aac')
+                    self.assertAlmostEqual(float(probe['format']['duration']), 2, delta=.05)
 
 
 if __name__ == '__main__':

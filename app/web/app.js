@@ -9,6 +9,8 @@ const NARRATOR = "Narrator", UNASSIGNED = "Unassigned", PAUSE = "Scene break";
 const HEADING = /^[—–]\s+(?:[A-Z][a-z]+\s+)?[IVXLC]+\s+[—–]$/;
 
 const ICONS = {
+  sound: '<path d="M4 9v6M8 6v12M12 3v18M16 7v10M20 10v4"/>',
+  video: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
   play: '<path d="M7 4.5v15l12-7.5z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   wand: '<path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20 14 10M18 14l1 1"/>',
@@ -26,6 +28,7 @@ const ICONS = {
   book: '<path d="M4 19V5a2 2 0 0 1 2-2h5v18H6a2 2 0 0 1-2-2zM11 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
   lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  back: '<path d="m14 6-6 6 6 6"/>',
 };
 const icon = (name) => `<svg class="icon" viewBox="0 0 24 24">${ICONS[name]}</svg>`;
 
@@ -58,9 +61,13 @@ function modal(title, body, actions = [{ label: "Close", value: null }]) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
-    overlay.innerHTML = `<div class="modal"><h2>${esc(title)}</h2><div class="stack">${body}</div>
+    overlay.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h2>${esc(title)}</h2><div class="stack">${body}</div>
       <div class="row end">${actions.map((a, i) => `<button class="btn ${a.primary ? "primary" : ""}" data-i="${i}">${a.label}</button>`).join("")}</div></div>`;
-    const close = (value) => { overlay.remove(); resolve(value); };
+    const previousFocus = document.activeElement;
+    const close = (value) => { overlay.remove(); previousFocus?.focus({preventScroll:true}); resolve(value); };
+    overlay.addEventListener("keydown", event => {
+      if (event.key === "Escape") { event.stopPropagation(); close(null); }
+    });
     overlay.addEventListener("click", (event) => {
       if (event.target === overlay) close(null);
       const button = event.target.closest("[data-i]");
@@ -70,7 +77,7 @@ function modal(title, body, actions = [{ label: "Close", value: null }]) {
       }
     });
     document.body.append(overlay);
-    overlay.querySelector("input, textarea, select")?.focus();
+    overlay.querySelector("input, textarea, select, button")?.focus();
   });
 }
 
@@ -151,6 +158,9 @@ const routes = [
   [/^#\/project$/, viewProject, "project"],
 ];
 async function route() {
+  if (CharacterRegistry.dirty() && location.hash !== '#/characters' && !await CharacterRegistry.leave()) {
+    location.hash = '#/characters'; return;
+  }
   refreshOnProgress = null;
   closeMenu();
   const hash = location.hash || "#/";
@@ -177,7 +187,7 @@ async function viewVolumes() {
     const bar = Object.entries(counts).filter(([, n]) => n).map(([state, n]) =>
       `<i style="width:${(n / Math.max(volume.chapters, 1)) * 100}%;background:${STATE_COLOR[state]}" title="${STATE_LABEL[state]}: ${n}"></i>`).join("");
     return `<div class="card volume-card" data-volume="${esc(volume.name)}">
-      <h2>${esc(volume.name)}</h2><div class="muted small">${esc(volume.source)}</div>
+      <div class="row between"><h2>${esc(volume.name)}</h2><div class="row"><button class="btn small" data-edit-volume="${esc(volume.name)}">Edit</button><button class="btn small" data-remove-volume="${esc(volume.name)}">Remove</button></div></div><div class="muted small">${esc(volume.source)}</div>
       ${volume.error ? `<div class="banner">${esc(volume.error)}</div>` : ""}
       <div class="stats">
         <div class="stat"><b>${volume.chapters}</b><span>chapters</span></div>
@@ -194,13 +204,15 @@ async function viewVolumes() {
         <div><b><a href="#/narrator">Choose the narrator</a></b><span>Compare takes of the same passage and keep your favorite.</span></div>
         <div><b><a href="#/characters">Review the cast</a></b><span>Set each character's identity and reference voice for the whole book.</span></div>
         <div><b>Run automatically</b><span>Open a volume and start the job. You can stop and resume later.</span></div>
-        <div><b>Review flagged lines</b><span>Review uncertain speakers while the other chapters continue to your chosen format.</span></div>
+        <div><b>Review flagged lines</b><span>Review uncertain speakers before the selected batch proceeds to audio.</span></div>
       </div></div>
     <div class="grid cards" style="margin-top:18px">${cards}
       <div class="card add-card" id="add-volume"><div>${icon("plus")}<h3 style="margin-top:8px">Add a volume</h3><div class="small">Choose the chapter folder</div></div></div>
     </div>
     ${data.ffmpeg ? "" : `<div class="banner" style="margin-top:16px">${icon("info")} FFmpeg was not found. Only WAV export is available.</div>`}`;
   $$(".volume-card").forEach((card) => card.onclick = () => location.hash = `#/volume/${encodeURIComponent(card.dataset.volume)}`);
+  $$('[data-edit-volume]').forEach(button => button.onclick = e => { e.stopPropagation(); guard(() => editVolumeDialog(data.volumes.find(v => v.name === button.dataset.editVolume)),button); });
+  $$('[data-remove-volume]').forEach(button => button.onclick = e => { e.stopPropagation(); guard(() => removeVolumeDialog(data.volumes.find(v => v.name === button.dataset.removeVolume)),button); });
   $("#add-volume").onclick = addVolumeDialog;
   scheduleRefresh(viewVolumes);
 }
@@ -230,6 +242,22 @@ async function addVolumeDialog() {
 let volumeFilter = "all";
 let selected = new Set();
 const videoChip = (c) => `<span class="chip ${c.video.state === "ready" ? "ok" : c.video.state === "outdated" ? "warn" : ""}">${esc(c.video.label)}</span>`;
+
+/* The discreet back control follows the logical parent, not history.back():
+   a chapter returns to its volume, a volume returns to the volumes list, other pages have none. */
+function parentRoute(hash = location.hash || "#/") {
+  const chapter = /^#\/chapter\/([^/]+)\/.+$/.exec(hash);
+  if (chapter) {
+    let volume = chapter[1];
+    try { volume = decodeURIComponent(volume); } catch { /* keep the raw name */ }
+    return { href: `#/volume/${encodeURIComponent(volume)}`, label: `Back to ${volume}` };
+  }
+  if (/^#\/volume\/.+$/.test(hash)) return { href: "#/", label: "Back to volumes" };
+  return null;
+}
+const backButton = (parent) => parent
+  ? `<a class="back" id="back" href="${esc(parent.href)}" aria-label="${esc(parent.label)}" title="${esc(parent.label)}">${icon("back")}</a>`
+  : "";
 async function viewVolume(name) {
   const data = await api(`/api/volumes/${encodeURIComponent(name)}`);
   const chapters = data.chapters;
@@ -243,10 +271,10 @@ async function viewVolume(name) {
   const visibleSelected = visible.filter((c) => selected.has(c.stem)).length;
   const bar = Object.entries(counts).map(([state, n]) => `<i style="width:${n / chapters.length * 100}%;background:${STATE_COLOR[state]}"></i>`).join("");
   const target = selected.size ? `for ${selected.size} selected chapter${selected.size === 1 ? "" : "s"}` : "for the whole volume";
-  view.innerHTML = `
+  view.innerHTML = `${backButton(parentRoute())}
     <div class="crumbs"><a href="#/">Volumes</a> ›</div>
     <div class="page-head"><div><h1>${esc(name)}</h1><p class="small">${esc(data.volume.source)}</p></div>
-      <div class="row"><button class="btn" id="open-source">${icon("folder")} Chapters</button><button class="btn" id="open-export">${icon("download")} Exported files</button></div></div>
+      <div class="row"><button class="btn" id="edit-volume">Edit volume</button><button class="btn" id="remove-volume">Remove volume</button><button class="btn" id="open-source">${icon("folder")} Chapters</button><button class="btn" id="open-export">${icon("download")} Exported files</button><button class="btn" id="run-volume" ${chapters.length && !chapters.some((c) => !c.can_export) ? "" : `disabled title="Generate current audio for every chapter in this volume."`}>${icon("book")} Export the whole volume</button></div></div>
     <div class="card">
       <div class="stats" style="margin-top:0">
         <div class="stat"><b>${chapters.length}</b><span>chapters</span></div>
@@ -258,24 +286,15 @@ async function viewVolume(name) {
       <hr class="soft">
       <div class="row between">
         <div><h3>Run automatically <span class="muted small" style="font-family:var(--sans);font-weight:400">${target}</span></h3>
-          <div class="muted small" style="max-width:600px">Analyze dialogue, generate audio and export each chapter. Chapters with uncertain speakers wait for your review while the others continue. You can stop at any time.</div></div>
+          <div class="muted small" style="max-width:600px">Analyze dialogue, generate audio and export each chapter. The entire batch waits if any chapter needs speaker review or an analysis repair. You can stop at any time.</div></div>
         <button class="btn primary big" id="run-all">${icon("play")} Run automatically</button>
       </div>
-      <div class="row" style="margin-top:14px">
-        <button class="btn" id="run-analyze">${icon("wand")} Analyze only</button>
-        <button class="btn" id="run-render">${icon("play")} Generate only</button>
-        <button class="btn" id="run-export">${icon("download")} Export chapters</button>
-        <button class="btn" id="run-volume">${icon("book")} Export the whole volume</button>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn" id="run-video" ${chapters.some(c => ["generated", "exported"].includes(c.state)) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create videos</button>
-        <button class="btn" id="youtube">${icon("list")} Export YouTube chapter list</button>
-      </div>
-      <p class="muted small" style="margin:10px 0 0">Videos use existing audio, ${target}. ${data.video_enabled ? "Automatic processing also creates videos after audio export." : 'Automatic video is off. Enable it in <a href="#/settings">Settings</a>.'}
-      ${data.video_enabled && data.video_factor ? `Video adds about ${duration(chapters.filter(c => c.video.state !== "ready").reduce((sum, c) => sum + (c.seconds ?? c.estimated_seconds ?? 0), 0)*data.video_factor)} (based on a completed render).` : ""}</p>
+      ${ChapterWorkflow.html(chapters, name)}
+      <p class="muted small">The entire selected batch must finish text review before audio starts. Without a selection, the batch is the whole volume. Automatic processing pauses here if any chapter needs review. ${data.video_enabled ? "It also creates video after current audio is exported." : "Automatic video is off."}</p>
     </div>
-    ${counts.needs_review ? `<div class="banner" style="margin-top:16px">${icon("flag")}<div><b>${counts.needs_review} chapters need your review.</b> Some lines have uncertain speakers. Open those chapters and choose the speaker for each highlighted line.</div></div>` : ""}
-    ${counts.error ? `<div class="banner" style="margin-top:16px;background:var(--bad-soft);color:var(--bad)">${icon("info")}<div><b>${counts.error} chapters have errors.</b> See the chapter or activity log for details.</div></div>` : ""}
+    <div class="card" id="volume-cast"></div>
+    ${counts.needs_review ? `<div class="banner" style="margin-top:16px">${icon("flag")}<div><b>${counts.needs_review} ${counts.needs_review === 1 ? "chapter needs" : "chapters need"} your review.</b> Some lines have uncertain speakers. Open those chapters and choose the speaker for each highlighted line.</div></div>` : ""}
+    ${counts.error ? `<div class="banner" style="margin-top:16px;background:var(--bad-soft);color:var(--bad)">${icon("info")}<div><b>${counts.error} ${counts.error === 1 ? "chapter has an error" : "chapters have errors"}.</b> Choose Diagnose / repair in Text, or beside the affected chapter.</div></div>` : ""}
     <div class="card" style="margin-top:16px">
       <div class="filters">${[["all", `All (${chapters.length})`], ...Object.keys(STATE_LABEL).filter((s) => counts[s]).map((s) => [s, `${STATE_LABEL[s]} (${counts[s]})`])]
         .map(([key, label]) => `<span class="chip ${key === "all" ? "" : STATE_CLASS[key]} ${volumeFilter === key ? "on" : ""}" data-filter="${key}">${label}</span>`).join("")}</div>
@@ -283,7 +302,7 @@ async function viewVolume(name) {
       <tbody>${visible.map((c) => `<tr class="clickable" data-stem="${esc(c.stem)}">
         <td class="check"><label class="chapter-select"><input type="checkbox" data-select="${esc(c.stem)}" aria-label="Select ${esc(c.title)}" ${selected.has(c.stem) ? "checked" : ""}></label></td>
         <td class="num">${c.number ?? ""}</td>
-        <td>${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.error)}</div>` : ""}</td>
+        <td>${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.analysis_problem ? "Speaker analysis needs repair." : c.error)}</div><button class="btn" data-diagnose="${esc(c.stem)}">Diagnose / repair</button>` : ""}</td>
         <td class="dur">${c.seconds ? duration(c.seconds) : `~${duration(c.estimated_seconds)}`}</td>
         <td>${chip(c.state, c.label)}${c.state === "partial" ? `<span class="bar mini-bar"><i style="width:${c.progress * 100}%"></i></span>` : ""}
           ${c.unclear ? `<span class="chip warn" title="unassigned dialogue">${c.unclear} unassigned</span>` : ""}
@@ -296,11 +315,17 @@ async function viewVolume(name) {
     <audio id="volume-player" controls class="hidden" style="width:100%;margin-top:14px"></audio>`;
 
   const run = (steps, button) => guard(async () => {
-    await api("/api/run", { method: "POST", body: { volume: name, stems: [...selected], steps,
+    await api("/api/run", { method: "POST", body: { volume: name, stems: steps.includes("volume") ? chapters.map(c => c.stem) : [...selected], steps,
       automatic: steps.join(",") === "analyze,render,export" } });
     toast("Job queued. Follow progress in the lower-left panel.");
     pollNow();
   }, button);
+  ChapterWorkflow.bind();
+  $("#review-text").onclick = () => { volumeFilter = "needs_review"; viewVolume(name); };
+  $("#diagnose-text").onclick = (e) => guard(() => ChapterWorkflow.diagnoseBatch(name,
+    chapters.filter(c => c.error && (!selected.size || selected.has(c.stem)))), e.currentTarget);
+  $("#run-all").disabled = !chapters.length;
+  $("#run-volume").disabled = !chapters.length || chapters.some(c => !c.can_export);
   $("#run-all").onclick = (e) => run(["analyze", "render", "export"], e.currentTarget);
   $("#run-analyze").onclick = (e) => run(["analyze"], e.currentTarget);
   $("#run-render").onclick = (e) => run(["render"], e.currentTarget);
@@ -315,6 +340,9 @@ async function viewVolume(name) {
       [{ label: "Cancel", value: false }, { label: "Export volume", value: true, primary: true }]);
     if (ok) run(["volume"], e.currentTarget);
   };
+  $("#edit-volume").onclick = e => guard(() => editVolumeDialog(data.volume),e.currentTarget);
+  $("#remove-volume").onclick = e => guard(() => removeVolumeDialog(data.volume),e.currentTarget);
+  VoiceRules.mount(name).catch(error => toast(error.message));
   $("#open-source").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "source", volume: name } }));
   $("#open-export").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "export", volume: name } }));
   $$("[data-filter]").forEach((element) => element.onclick = () => { volumeFilter = element.dataset.filter; viewVolume(name); });
@@ -325,6 +353,8 @@ async function viewVolume(name) {
     box.checked ? selected.add(box.dataset.select) : selected.delete(box.dataset.select); viewVolume(name);
   });
   $$("tr.clickable").forEach((row) => row.onclick = (event) => {
+    const diagnostic = event.target.closest("[data-diagnose]");
+    if (diagnostic) { guard(() => ChapterWorkflow.diagnose(name, row.dataset.stem), diagnostic); return; }
     const cell = event.target.closest("td.check");
     if (cell) {
       if (!event.target.closest("input, label")) $("[data-select]", cell).click();
@@ -334,7 +364,7 @@ async function viewVolume(name) {
     if (play) { const player = $("#volume-player"); player.classList.remove("hidden"); player.src = play.dataset.play; player.play(); return; }
     location.hash = `#/chapter/${encodeURIComponent(name)}/${encodeURIComponent(row.dataset.stem)}`;
   });
-  scheduleRefresh(() => { if (!$("#volume-player") || $("#volume-player").paused) viewVolume(name); });
+  scheduleRefresh(() => { if ((!$("#volume-player") || $("#volume-player").paused) && !ChapterWorkflow.isOpen()) viewVolume(name); });
 }
 
 /* ---------- chapter editor ---------- */
@@ -347,32 +377,37 @@ async function viewChapter(volume, stem) {
   const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) =>
     lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged)));
   const kind = (line) => line.speaker === PAUSE ? "pause" : HEADING.test(line.text) ? "heading" : line.speaker === NARRATOR ? "narration" : "speech";
-  view.innerHTML = `
+  view.innerHTML = `${backButton(parentRoute())}
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
     <div class="page-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
       <p>${chip(c.state, c.label)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
       ${videoChip(c)} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
-      <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${lines.length ? "Analyze again" : "Analyze"}</button>
-        <button class="btn primary" id="render">${icon("play")} Generate chapter</button>
+      <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${!data.manual_draft ? "Analyze again" : "Analyze Text"}</button>
+        <button class="btn primary" id="render" ${c.can_generate ? "" : 'disabled title="Finish text analysis and resolve speakers first."'}>${icon("play")} Generate chapter</button>
         <button class="btn" id="create-video" ${["generated", "exported"].includes(c.state) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create video</button>
         <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button></div></div>
-    ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}</div>` : ""}
+    ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}<button class="btn" id="diagnose-chapter">Diagnose / repair</button></div>` : ""}
+    ${data.manual_draft || c.analysis_problem ? `<div class="banner">${icon("book")}<div><b>Manual speaker editor</b><p>The text is available even if AI analysis fails. Choose a speaker beside each line or split a line; changes save without using Gemma. Your original chapter file is never edited.</p><button class="btn" id="save-manual">${data.manual_draft ? "Use manual assignments" : "Keep these assignments"}</button></div></div>` : ""}
     ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}
     ${c.video.url ? `<div class="row" style="margin:10px 0 16px"><a class="btn" href="${esc(c.video.url)}" target="_blank" rel="noopener">${icon("play")} Open video</a><button class="btn" id="show-video">${icon("folder")} Show in folder</button></div>` : ""}
     ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
+    ${data.spoken_error ? `<div class="banner"><div><b>Spoken-text edits need review</b><p>${esc(data.spoken_error)}</p><details><summary>Stale edits</summary>${data.spoken_conflicts.map(entry=>`<div class="log">${esc(entry.text || "")}</div>`).join("")}</details><button class="btn" data-clear-spoken>Discard stale spoken-text edits</button></div></div>` : ""}
+    ${data.voice_error ? `<div class="banner"><div><b>Voice rules need review</b><p>${esc(data.voice_error)}</p><button class="btn" data-clear-voice-conflicts>Review and clear stale line overrides</button></div></div>` : ""}
     ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} lines need a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
     ${data.report ? `<details class="card" style="padding:14px 18px"><summary><b>Analysis report</b></summary><div class="log" style="margin-top:10px">${esc(data.report)}</div></details>` : ""}
     <div class="card" style="margin-top:16px">
       ${lines.length ? `<div class="row between"><div class="filters" style="margin:0">
           ${[["all", "All text"], ["dialogue", "Dialogue only"], ["review", `Needs review (${unclear + lines.filter((l) => l.flagged).length})`]].map(([key, label]) =>
             `<span class="chip ${lineFilter === key ? "on" : ""}" data-lines="${key}">${label}</span>`).join("")}</div>
-          <div class="legend">${speakers.map((s) => `<span class="chip"><i class="dot" style="background:${colorFor(s)}"></i>${esc(s)}</span>`).join("")}</div></div>
+          <div class="legend">${speakers.map((s) => `<button type="button" class="chip" data-legend-voice="${esc(s)}" title="Edit reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`).join("")}</div></div>
         <div class="script" id="script">${shown.map(({ line, index }, position) => `
           <div class="line ${kind(line)} ${line.joined ? "joined" : position ? "gap" : ""} ${line.speaker === UNASSIGNED ? "unclear" : ""} ${line.omitted ? "omitted" : ""}" data-index="${index}" style="--c:${colorFor(line.speaker)}" ${line.omitted ? 'title="Omitted: the fixed voice identifies the speaker. You can change this in Settings."' : ""}>
             <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.speaker)}</button>`}</div>
-            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}</div>
+            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}</div>
             <div class="tools">
               ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play from here">${icon("play")}</button>` : ""}
+              ${![PAUSE,UNASSIGNED].includes(line.speaker) ? `<button type="button" class="btn small reading-voice" data-voice-rule="${index}" title="Edit the reading voice for this line">Voice: ${esc(line.read_as || line.speaker)}</button>` : ""}
+              ${line.speaker !== PAUSE ? `<button class="btn small" data-edit-spoken="${index}" ${data.manual_draft ? "disabled" : ""} title="Edit the spoken version without changing the manuscript">Edit spoken text</button>` : ""}
               ${line.speaker !== PAUSE ? `<button class="btn ghost icon-only" data-split="${index}" title="Split the line, for example at a speech tag">${icon("scissors")}</button>` : ""}
               ${line.start != null ? `<button class="btn ghost icon-only" data-variant="${index}" title="Generate another take of this line">${icon("redo")}</button>` : ""}
             </div></div>`).join("")}</div>`
@@ -384,11 +419,12 @@ async function viewChapter(volume, stem) {
     toast("Queued. Progress appears in the lower-left panel.");
     pollNow();
   }, button);
-  $("#render").onclick = (e) => runChapter(lines.length ? ["render", "export"] : ["analyze", "render", "export"], e.currentTarget);
+  $("#render").onclick = (e) => runChapter(["render", "export"], e.currentTarget);
+  $("#diagnose-chapter")?.addEventListener("click", (e) => guard(() => ChapterWorkflow.diagnose(volume, stem), e.currentTarget));
   $("#create-video").onclick = (e) => runChapter(["video"], e.currentTarget);
   $("#show-video")?.addEventListener("click", (e) => guard(() => api("/api/video/show", { method: "POST", body: { volume, stem } }), e.currentTarget));
   const analyze = async (button) => {
-    if (lines.length && !await modal("Analyze again?", "<p>Your speaker assignments for this chapter will be replaced by a new analysis.</p>",
+    if (!data.manual_draft && lines.length && !await modal("Analyze again?", "<p>Your speaker assignments for this chapter will be replaced by a new analysis.</p>",
       [{ label: "Cancel", value: false }, { label: "Analyze again", value: true, primary: true }])) return;
     guard(async () => { await api("/api/chapter/analyze", { method: "POST", body: { volume, stem } }); toast("Analysis started."); pollNow(); }, button);
   };
@@ -398,12 +434,15 @@ async function viewChapter(volume, stem) {
   $$("[data-lines]").forEach((element) => element.onclick = () => { lineFilter = element.dataset.lines; viewChapter(volume, stem); });
 
   const save = async (rows, message) => {
-    const result = await api("/api/chapter/rows", { method: "PUT", body: { volume, stem, rows } });
+    const result = await api("/api/chapter/rows", { method: "PUT", body: { volume, stem, rows, source_hash:data.source_hash } });
     if (result.added?.length) toast(`Added to the glossary: ${result.added.join(", ")}. Review their gender in Characters.`);
     else if (message) toast(message);
     viewChapter(volume, stem);
   };
+  VoiceRules.bindChapter(volume, stem, data);
+  SpokenText.bind(volume, stem, data);
   const rows = () => lines.map((l) => [l.speaker, l.text, l.joined, l.variant]);
+  $("#save-manual")?.addEventListener("click", e => guard(() => save(rows(), "Manual assignments saved. Resolve remaining unassigned speakers before generating audio."), e.currentTarget));
   $$("[data-who]").forEach((button) => button.onclick = (event) => {
     event.stopPropagation();
     const index = +button.dataset.who;
@@ -419,7 +458,7 @@ async function viewChapter(volume, stem) {
       <label class="field"><span>Words where the new segment begins</span><input type="text" name="phrase" placeholder="he said"></label>
       <label class="field"><span>Speaker for the new segment</span><select name="speaker">${data.speakers.map((s) => `<option>${esc(s)}</option>`).join("")}</select></label>`,
       [{ label: "Cancel", value: null }, { label: "Split", value: "form", primary: true }]);
-    if (form) guard(async () => { await api("/api/chapter/split", { method: "POST", body: { volume, stem, index, ...form } }); viewChapter(volume, stem); });
+    if (form) guard(async () => { await api("/api/chapter/split", { method: "POST", body: { volume, stem, index, source_hash:data.source_hash, ...form } }); viewChapter(volume, stem); });
   });
   $$("[data-variant]").forEach((button) => button.onclick = () => guard(() => {
     const next = rows();
@@ -490,7 +529,11 @@ function pickPreset(title, intro, items, current) {
     overlay.innerHTML = `<div class="modal wide"><h2>${esc(title)}</h2><div class="stack"><p class="muted small">${intro}</p>
       <div class="presets">${presetRows(items, current, "Use this voice")}</div></div>
       <div class="row end"><button class="btn" data-close>Cancel</button></div></div>`;
-    const close = (value) => { overlay.remove(); resolve(value); };
+    const previousFocus = document.activeElement;
+    const close = (value) => { overlay.remove(); previousFocus?.focus({preventScroll:true}); resolve(value); };
+    overlay.addEventListener("keydown", event => {
+      if (event.key === "Escape") { event.stopPropagation(); close(null); }
+    });
     overlay.addEventListener("click", (event) => {
       if (event.target === overlay || event.target.closest("[data-close]")) close(null);
       const pick = event.target.closest("[data-preset]");
@@ -522,11 +565,26 @@ async function showVoiceGuide(example = false) {
 
 let characterData = null, characterSaveTimer = null, characterSample = "", characterQuery = "";
 async function viewCharacters() {
+  if (CharacterRegistry.tab === 'quick') return CharacterRegistry.show();
   const [characters, similarity] = await Promise.all([api("/api/characters"), api("/api/voices/similarity")]);
   characterData = { ...characters, similarity };
   characterSample ||= characters.default_sample;
   drawCharacters();
 }
+let fieldHelpId = 0;
+function fieldHelp(label, text, shortLabel = "") {
+  const id='field-help-'+(++fieldHelpId);
+  return `<span class="field-help"><button type="button" class="help-trigger" aria-label="Help: ${esc(label)}" aria-describedby="${id}">${shortLabel ? esc(shortLabel) : icon('info')}</button><span class="help-content" role="tooltip" id="${id}">${esc(text)}</span></span>`;
+}
+function bindFieldHelp(root) {
+  root.querySelectorAll('.field-help').forEach(tip=>{
+    const button=tip.querySelector('button');
+    button.onkeydown=e=>{if(e.key==='Escape'){tip.classList.add('dismissed');e.stopPropagation();}};
+    button.onfocus=()=>tip.classList.remove('dismissed');
+    tip.onmouseenter=()=>tip.classList.remove('dismissed');
+  });
+}
+
 function drawCharacters() {
   const d = characterData;
   const profileNames = (gender) => [...(d.profiles[gender] || []), ...(gender === "unknown" ? [] : d.profiles.unknown || []), ...d.profiles.narrator];
@@ -537,15 +595,15 @@ function drawCharacters() {
   const closestTo = (name) => pairs.filter((p) => p.a === name || p.b === name).map((p) => ({ name: p.a === name ? p.b : p.a, score: p.score }))[0];
   view.innerHTML = `
     <div class="page-head"><div><h1>Your characters</h1>
-      <p>Each character has <b>one voice, used in every chapter</b>. Gender, aliases and context help identify the speaker. Changes save automatically.</p></div>
+      <p>Each character has an own reference voice. Reading rules can choose the narrator or another character without changing who speaks. Gender, aliases and context help identify speakers.</p></div>
       <button class="btn primary" id="new-character">${icon("plus")} New character</button></div>
-    <div class="banner info">${icon("info")}<div class="stack">
+    <details class="card character-guide"><summary>About fixed voices and auditions</summary><div class="stack">
       <div><b>Important: a preview should express the character's personality.</b>
         <p class="small">Build the voice sheet from the story, relationships and speaking style, then write the description and sample in English. A fixed reference also carries the sample's delivery.</p>
         <p class="small">Editing a description does not replace a fixed voice. Listen to a new take and fix it explicitly when you choose to change a voice. The guide does not change anything automatically.</p></div>
       <div class="row"><button class="btn small" id="voice-guide">Voice personality guide</button>
         <button class="btn small" id="voice-guide-example">View complete example</button></div>
-    </div></div>
+    </div></details>
     ${d.duplicates.length ? `<div class="banner">${icon("flag")}<div><b>Identical voices:</b> ${d.duplicates.map((g) => esc(g.join(" and "))).join("; ")}. They may be hard to distinguish in the same scene.</div></div>` : ""}
     ${confusable.length ? `<div class="banner">${icon("flag")}<div><b>Similar fixed voices</b> (voice fingerprint, 1 = identical): ${confusable.map((p) => `${esc(p.a)} ↔ ${esc(p.b)} <b>${p.score.toFixed(2)}</b>`).join(" · ")}.
       For one of them, choose <b>“Find a more distinct voice”</b> to compare up to 3 new takes from the same description, ranked by their difference from the other voices.</div></div>` : ""}
@@ -558,32 +616,35 @@ function drawCharacters() {
       const design = d.profile_texts[c.design] ? c.design : "__custom";
       const text = d.profile_texts[c.design] || c.design;
       return `<div class="card char-card" data-i="${i}">
-        <div class="char-head"><i class="dot" style="background:${colorFor(c.name)};width:14px;height:14px"></i>
-          <h3 style="flex:1">${esc(c.name)}</h3>
-          <div class="seg">${[["male", "♂"], ["female", "♀"], ["unknown", "?"]].map(([g, s]) => `<button class="${c.gender === g ? "on" : ""}" data-gender="${g}" title="${g}">${s}</button>`).join("")}</div></div>
-        <div class="two-cols"><label class="field"><span>Aliases</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
-          <label class="field"><span>Model</span><select data-f="model">${["same as narrator", "VoiceDesign", "CustomVoice"].map((m) => `<option ${c.model === m ? "selected" : ""}>${m}</option>`).join("")}</select></label></div>
-        <label class="field"><span>Context for speaker detection</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>
-        <label class="field"><span>Character sample — personality (English)</span><textarea data-f="sample" rows="3" placeholder="${esc(characterSample)}">${esc(c.sample || "")}</textarea>
-          <small>A fixed voice also carries the sample's delivery. Write it in the character's voice (12–20 s).</small></label>
-        <label class="field"><span>Voice description (VoiceDesign)</span><select data-profile>${["__custom", ...profileNames(genderKey[c.gender])].map((p) => `<option value="${esc(p)}" ${p === design ? "selected" : ""}>${p === "__custom" ? "Custom description" : esc(p)}</option>`).join("")}</select></label>
-        <textarea data-description rows="3">${esc(text)}</textarea>
-        <label class="field"><span>Built-in speaker (CustomVoice)</span><select data-f="custom"><option value=""></option>${Object.entries(d.custom_speakers).map(([s, about]) => `<option value="${s}" ${c.custom === s ? "selected" : ""}>${s} — ${esc(about)}</option>`).join("")}</select></label>
-        <div class="foot"><input type="number" data-f="seed" value="${c.seed}" title="Variation number (seed)">
-          <button class="btn ghost icon-only" data-dice title="Another take">${icon("dice")}</button>
-          <button class="btn" data-listen>${icon("play")} Listen</button>
-          <span style="flex:1"></span><button class="btn ghost icon-only danger" data-delete title="Remove from glossary">${icon("trash")}</button></div>
+        <div class="char-head"><i class="dot" style="background:${colorFor(c.name)};width:14px;height:14px"></i><h3 style="flex:1">${esc(c.name)}</h3>
+          <div class="seg" aria-label="Gender">${[["male", "♂"], ["female", "♀"], ["unknown", "?"]].map(([g, sign]) => `<button class="${c.gender === g ? "on" : ""}" data-gender="${g}" title="${g}" aria-label="${g}" aria-pressed="${c.gender === g}">${sign}</button>`).join("")}</div></div>
+        <button class="btn small" data-reading-voice>Read as: ${esc(c.read_as || c.name)}</button>
+        <div class="row between"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${c.fixed ? icon('lock')+' Fixed voice' : 'Voice to review'}</span>${fieldHelp('Fixed voice','An approved recording keeps the voice identity. Unfix returns to the recipe and can make generated chapters outdated.')}
+        <button class="btn" data-listen>${icon("play")} Listen</button></div>
         <audio data-audio controls class="hidden" style="width:100%"></audio>
-        ${c.fixed ? `<div class="fixed-box"><div class="row between"><b>${icon("lock")} Fixed voice</b><button class="btn ghost small" data-unfix>Unfix voice</button></div>
-            <div class="small muted">This reference voice is used throughout the book. Listen already uses the approved voice.</div>
-            ${(() => { const near = closestTo(c.name); return near ? `<div class="small" style="color:${near.score >= 0.5 ? "var(--warn)" : "var(--muted)"}">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? " — may be confused" : ""}</div>` : ""; })()}
-            <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>`
-          : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
-        <div class="row"><button class="btn" data-preset-pick>${icon("book")} Use a preset voice</button>
-          <button class="btn" data-candidates>${icon("dice")} Find a more distinct voice</button></div>
-        <div class="takes" data-candidate-list></div>
+        ${c.fixed ? `<div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
+          ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
+          <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
+        <div class="small muted">Shared performance variation ${fieldHelp('Shared performance variation','The Narrator page sets one temperature for all voices, including characters. Each character has a separate seed. This does not change the fixed reference.')}<a href="#/narrator">Narrator settings</a></div>
+        <details class="character-section"><summary>Speaker detection</summary>
+          <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
+          <label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>
+        </details>
+        <details class="character-section"><summary>Voice creation</summary>
+          <label class="field"><span>Voice recipe model ${fieldHelp('Voice recipe model','Creates audition takes from a description (VoiceDesign), a built-in speaker (CustomVoice), or the narrator’s recipe model. A fixed reference takes priority until you unfix it.')}</span><select data-f="model">${["same as narrator", "VoiceDesign", "CustomVoice"].map(m=>`<option ${c.model === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+          <label class="field"><span>Character sample — personality (English) ${fieldHelp('Character sample','The text used for auditions. A fixed voice clones the approved recording without delivery instructions. The reference’s rhythm and emotion can influence later lines; punctuation still matters and does not guarantee a specific emotion.')}</span><textarea data-f="sample" rows="3" placeholder="${esc(characterSample)}">${esc(c.sample || '')}</textarea></label>
+          <label class="field"><span>Voice description (VoiceDesign) ${fieldHelp('Voice description','Describes timbre, age and accent when creating a new VoiceDesign take. Editing it does not alter an already fixed voice.')}</span><select data-profile>${["__custom",...profileNames(genderKey[c.gender])].map(p=>`<option value="${esc(p)}" ${p===design ? 'selected' : ''}>${p==='__custom' ? 'Custom description' : esc(p)}</option>`).join('')}</select></label>
+          <textarea data-description aria-label="Voice description text" rows="3">${esc(text)}</textarea>
+          <label class="field"><span>Built-in speaker (CustomVoice) ${fieldHelp('Built-in speaker','Selects a built-in speaker for CustomVoice auditions. Ryan and Aiden are the English speakers in this catalog. Fixed voices use their approved recording instead.')}</span><select data-f="custom"><option value=""></option>${Object.entries(d.custom_speakers).map(([name,about])=>`<option value="${name}" ${c.custom===name ? 'selected' : ''}>${name} — ${esc(about)}</option>`).join('')}</select></label>
+          <div class="foot"><label class="field"><span>Variation number (seed) ${fieldHelp('Seed','A number used to repeat an audition take. The dice choose another number for a different take of the same recipe; they do not replace the fixed reference.')}</span><input type="number" data-f="seed" value="${c.seed}" title="Variation number (seed)"></label><button class="btn ghost icon-only" data-dice title="Another take">${icon('dice')}</button></div>
+          <div class="row"><button class="btn" data-preset-pick>${icon('book')} Use a preset voice</button><button class="btn" data-candidates>${icon('dice')} Find a more distinct voice</button></div>
+          <div class="takes" data-candidate-list></div>
+        </details>
+        <div class="row end"><button class="btn ghost icon-only danger" data-delete title="Remove from glossary">${icon('trash')}</button></div>
       </div>`;
     }).join("")}</div>`;
+  CharacterRegistry.studioHeader();
+  bindFieldHelp(view);
   $("#voice-guide").onclick = (e) => guard(() => showVoiceGuide(), e.currentTarget);
   $("#voice-guide-example").onclick = (e) => guard(() => showVoiceGuide(true), e.currentTarget);
   $("#query").oninput = (e) => { characterQuery = e.target.value.toLowerCase(); clearTimeout(drawCharacters.t); drawCharacters.t = setTimeout(() => { drawCharacters(); $("#query").focus(); $("#query").setSelectionRange(99, 99); }, 300); };
@@ -596,6 +657,7 @@ function drawCharacters() {
   };
   $$(".char-card").forEach((card) => {
     const c = d.characters[+card.dataset.i];
+    $("[data-reading-voice]", card).onclick = e => guard(() => VoiceRules.editor(c.name,{text:c.sample || characterSample}),e.currentTarget);
     const changed = () => queueCharacterSave();
     $$("[data-f]", card).forEach((field) => field.oninput = () => { c[field.dataset.f] = field.type === "number" ? +field.value : field.value; changed(); });
     $$("[data-gender]", card).forEach((button) => button.onclick = () => { c.gender = button.dataset.gender; changed(); drawCharacters(); });
@@ -774,43 +836,44 @@ async function viewSettings() {
     ${data.ffmpeg ? "" : `<div class="banner">${icon("info")} FFmpeg was not found on this computer. Only WAV is available.</div>`}
     <p class="small muted" id="model-profile">Model set: <b>${esc(data.model_profile.label)}</b> · dialogue model ${esc(data.model_profile.gemma)}. Chosen during installation.</p>
     <div class="grid two">
-      <div class="card stack"><h3>Chapter file format</h3>
+      <details class="card stack settings-section" open><summary><h3>${icon("sound")} Audio</h3></summary>
         <div class="grid" style="grid-template-columns:1fr 1fr">${Object.entries(data.formats.chapter).map(([key, label]) => `
           <label class="choice ${s.export_format === key ? "on" : ""}"><input type="radio" name="format" value="${key}" ${s.export_format === key ? "checked" : ""}><div><b>${esc(label)}</b><span>${formatHelp[key]}</span></div></label>`).join("")}</div>
         <div><span class="small muted">Quality</span><br><div class="seg" id="quality"><button data-q="standard" class="${s.export_quality === "standard" ? "on" : ""}">Standard · 64 kbps</button><button data-q="high" class="${s.export_quality === "high" ? "on" : ""}">High · 96 kbps</button></div></div>
         <label class="field"><span>Whole-volume format</span><select id="volume-format">${Object.entries(data.formats.volume).map(([key, label]) => `<option value="${key}" ${s.volume_format === key ? "selected" : ""}>${esc(label)}</option>`).join("")}</select><small>M4B preserves chapter markers for compatible audiobook players.</small></label>
         <label class="field"><span>Author (file metadata)</span><input type="text" id="author" value="${esc(s.author)}"></label>
-      </div>
-      <div class="card stack"><h3>Reading</h3>
-        <label class="switch"><input type="checkbox" id="multi" ${s.multi_voice ? "checked" : ""}><div><b>Separate character voices</b><div class="small muted">Off: the narrator reads everything, including dialogue.</div></div></label>
-        <label class="switch"><input type="checkbox" id="announce" ${s.announce_titles ? "checked" : ""}><div><b>Announce chapter titles</b><div class="small muted">For example: Chapter 1. Arrival. followed by a pause.</div></div></label>
-        <label class="switch"><input type="checkbox" id="tags" ${s.speech_tags !== "all" ? "checked" : ""}><div><b>Omit simple speech tags for fixed voices</b><div class="small muted">A simple tag such as Alex said is omitted when Alex has a fixed voice. Informative tags such as she whispered and tags for voices without references are kept.</div></div></label>
-        <label class="field"><span>Pause between speakers: <b id="pause-value">${s.dialogue_pause}</b> s</span><input type="range" id="pause" min="0.2" max="1.5" step="0.05" value="${s.dialogue_pause}">
-          <small>Actual silence between speakers. Tag-to-dialogue: 0.25 s; paragraphs: 0.6 s; scene changes: 1.2 s.</small></label>
-        <div><b>Uncertain speakers during automatic processing</b>
-          <div class="stack" style="margin-top:8px">
-            <label class="choice ${s.unclear_policy === "wait" ? "on" : ""}"><input type="radio" name="policy" value="wait" ${s.unclear_policy === "wait" ? "checked" : ""}><div><b>Wait for my review</b><span>The chapter waits until you choose the speaker. Recommended for accuracy.</span></div></label>
-            <label class="choice ${s.unclear_policy === "narrator" ? "on" : ""}"><input type="radio" name="policy" value="narrator" ${s.unclear_policy === "narrator" ? "checked" : ""}><div><b>Use the narrator</b><span>Processing continues. Those lines use the narrator's voice.</span></div></label>
-          </div></div>
-      </div>
-    </div>`;
+      </details>
+      <details class="card stack settings-section" id="video-settings" open><summary><h3>${icon("video")} Video</h3></summary>
+        <label class="switch"><input type="checkbox" id="video-enabled" ${v.enabled ? "checked" : ""}><div><b>Also create an MP4 video</b><div class="small muted">Run automatically creates videos after audio export. Off by default; manual video creation is always available.</div></div></label>
+        <div class="two-cols">
+          <label class="field"><span>Resolution</span><select id="video-resolution"><option value="1920" ${v.width === 1920 ? "selected" : ""}>1080p · 1920 × 1080</option><option value="1280" ${v.width === 1280 ? "selected" : ""}>720p · 1280 × 720</option></select></label>
+          <label class="field"><span>Video codec</span><select id="video-codec" disabled aria-describedby="video-codec-help">${Object.entries({h264: "H.264", h265: "H.265 (HEVC)", av1: "AV1"}).map(([key, label]) => `<option value="${key}" ${(v.codec || "h264") === key ? "selected" : ""}>${label} · Checking…</option>`).join("")}</select><small id="video-codec-help" aria-live="polite">Checking encoders… Encoded with NVIDIA NVENC when available. H.264 can also use the CPU; H.265 and AV1 require NVENC.</small></label>
+          <label class="field"><span>Previous passages</span><select id="video-before">${[0,1,2,3,4].map(n => `<option ${n === v.before ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label class="field"><span>Following passages</span><select id="video-after">${[0,1,2,3,4].map(n => `<option ${n === v.after ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        </div>
+        <label class="field"><span>Optional footer</span><input id="video-footer" type="text" maxlength="200" value="${esc(v.footer)}" placeholder="Leave empty for no footer"></label>
+        <label class="switch"><input type="checkbox" id="video-omitted" ${v.show_omitted ? "checked" : ""}><div>Show omitted speech tags</div></label>
+        <label class="switch"><input type="checkbox" id="video-progress" ${v.progress_bar ? "checked" : ""}><div>Show progress bar in video</div></label>
+        <p class="small muted">Uses current, generated audio. Changing appearance options makes existing videos outdated; turning automatic video on or off keeps them valid. Audio and voices are unchanged. ${data.video_factor ? `Measured render time: about ${Math.round(data.video_factor*60)} seconds per minute of audio.` : "A time estimate appears after the first completed video."}</p>
+      </details>
+    </div>
+    <details class="card stack settings-section" open style="margin-top:18px"><summary><h3>${icon("book")} Reading</h3></summary>
+      <label class="switch"><input type="checkbox" id="multi" ${s.multi_voice ? "checked" : ""}><div><b>Separate character voices</b><div class="small muted">Off: the narrator reads everything, including dialogue.</div></div></label>
+      <label class="switch"><input type="checkbox" id="announce" ${s.announce_titles ? "checked" : ""}><div><b>Announce chapter titles</b><div class="small muted">For example: Chapter 1. Arrival. followed by a pause.</div></div></label>
+      <label class="switch"><input type="checkbox" id="tags" ${s.speech_tags !== "all" ? "checked" : ""}><div><b>Omit simple speech tags for fixed voices</b><div class="small muted">A simple tag such as Alex said is omitted when Alex has a fixed voice. Informative tags such as she whispered and tags for voices without references are kept.</div></div></label>
+      <label class="field"><span>Pause between speakers: <b id="pause-value">${s.dialogue_pause}</b> s</span><input type="range" id="pause" min="0.2" max="1.5" step="0.05" value="${s.dialogue_pause}">
+        <small>Actual silence between speakers. Tag-to-dialogue: 0.25 s; paragraphs: 0.6 s; scene changes: 1.2 s.</small></label>
+      <div><b>Uncertain speakers during automatic processing</b>
+        <div class="stack" style="margin-top:8px">
+          <label class="choice ${s.unclear_policy === "wait" ? "on" : ""}"><input type="radio" name="policy" value="wait" ${s.unclear_policy === "wait" ? "checked" : ""}><div><b>Wait for my review</b><span>The selected batch waits until you choose every unresolved speaker. Recommended for accuracy.</span></div></label>
+          <label class="choice ${s.unclear_policy === "narrator" ? "on" : ""}"><input type="radio" name="policy" value="narrator" ${s.unclear_policy === "narrator" ? "checked" : ""}><div><b>Use the narrator</b><span>Processing continues. Those lines use the narrator's voice.</span></div></label>
+        </div></div>
+    </details>`;
   $$(".choice input").forEach((input) => input.onchange = () => $$(`.choice input[name=${input.name}]`).forEach((other) => other.closest(".choice").classList.toggle("on", other.checked)));
   $$("#quality button").forEach((b) => b.onclick = () => { $$("#quality button").forEach((x) => x.classList.toggle("on", x === b)); });
-  view.insertAdjacentHTML("beforeend", `<div class="card stack" id="video-settings" style="margin-top:18px"><h3>Video (optional)</h3>
-    <label class="switch"><input type="checkbox" id="video-enabled" ${v.enabled ? "checked" : ""}><div><b>Also create an MP4 video</b><div class="small muted">Run automatically creates videos after audio export. Off by default; manual video creation is always available.</div></div></label>
-    <div class="two-cols">
-      <label class="field"><span>Resolution</span><select id="video-resolution"><option value="1920" ${v.width === 1920 ? "selected" : ""}>1080p · 1920 × 1080</option><option value="1280" ${v.width === 1280 ? "selected" : ""}>720p · 1280 × 720</option></select></label>
-      <label class="field"><span>Optional footer</span><input id="video-footer" type="text" maxlength="200" value="${esc(v.footer)}" placeholder="Leave empty for no footer"></label>
-      <label class="field"><span>Previous passages</span><select id="video-before">${[0,1,2,3,4].map(n => `<option ${n === v.before ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-      <label class="field"><span>Following passages</span><select id="video-after">${[0,1,2,3,4].map(n => `<option ${n === v.after ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-    </div>
-    <label class="switch"><input type="checkbox" id="video-omitted" ${v.show_omitted ? "checked" : ""}><div>Show omitted speech tags</div></label>
-    <label class="switch"><input type="checkbox" id="video-progress" ${v.progress_bar ? "checked" : ""}><div>Show progress bar in video</div></label>
-    <p class="small muted">Uses current, generated audio. Changing appearance options makes existing videos outdated; turning automatic video on or off keeps them valid. Audio and voices are unchanged. ${data.video_factor ? `Measured render time: about ${Math.round(data.video_factor*60)} seconds per minute of audio.` : "A time estimate appears after the first completed video."}</p>
-    </div>`);
   $("#pause").oninput = (e) => $("#pause-value").textContent = e.target.value;
   $("#save").onclick = (e) => guard(async () => {
-    s.video = { ...v, enabled: $("#video-enabled").checked,
+    s.video = { ...v, codec: $("#video-codec").value, enabled: $("#video-enabled").checked,
       width: +$("#video-resolution").value, height: +$("#video-resolution").value === 1920 ? 1080 : 720,
       before: +$("#video-before").value, after: +$("#video-after").value,
       show_omitted: $("#video-omitted").checked, progress_bar: $("#video-progress").checked,
@@ -827,6 +890,22 @@ async function viewSettings() {
     await api("/api/settings", { method: "PUT", body: { settings: s } });
     toast("Settings saved");
   }, e.currentTarget);
+  // Do not wait for GPU checks before displaying the page or wiring its controls.
+  const codecSelect = $("#video-codec"), codecHelp = $("#video-codec-help");
+  api("/api/video/codecs").then(({codecs}) => {
+    if ($("#video-codec") !== codecSelect) return; // The user may have navigated away.
+    const current = v.codec || "h264";
+    codecSelect.innerHTML = Object.entries({h264: "H.264", h265: "H.265 (HEVC)", av1: "AV1"}).map(([key, label]) => {
+      const info = codecs[key];
+      const status = info.available ? (info.encoder === "libx264" ? "CPU" : "NVENC") : info.reason;
+      return `<option value="${key}" ${current === key ? "selected" : ""} ${info.available ? "" : "disabled"}>${label} · ${esc(status)}</option>`;
+    }).join("");
+    codecSelect.disabled = !Object.values(codecs).some(info => info.available);
+    codecHelp.textContent = "Encoded with NVIDIA NVENC when available. H.264 can also use the CPU; H.265 and AV1 require NVENC. " +
+      (codecs[current].available ? "" : `Saved codec unavailable: ${codecs[current].reason} Choose another codec before rendering.`);
+  }).catch(() => {
+    if ($("#video-codec") === codecSelect) codecHelp.textContent = "Encoder checks failed. Your saved codec is unchanged. Reopen Settings to retry.";
+  });
 }
 
 /* ---------- project transfer ---------- */
@@ -848,7 +927,7 @@ async function viewProject() {
         <button class="btn" id="undo-project" ${history.last_import ? "" : "disabled"}>${icon("redo")} Undo last import</button>
       </div>
     </div><div id="import-preview"></div>
-    <div class="card" style="margin-top:18px"><h3>Automatic backups</h3><p class="muted small">Stored in projects-backup inside the app folder. These backups can include book text and personal voices; keep them private.</p>
+    <div class="card" style="margin-top:18px"><h3>Automatic backups</h3><p class="muted small">Installed apps store automatic import backups in Backups/Projects. These backups can include book text and personal voices; keep them private.</p>
       ${history.backups.length ? `<div class="log">${esc(history.backups.join("\n"))}</div>` : '<p class="muted small">No imports yet.</p>'}</div>`;
   $("#export-project").onclick = (e) => guard(async () => {
     const parts = $$("[data-export-part]:checked").map(input => input.dataset.exportPart);
@@ -889,7 +968,7 @@ function drawImportPreview() {
   $("#import-preview").innerHTML = `<div class="card stack" style="margin-top:18px"><h2>Preview import</h2>
     <p class="small muted">${esc(p.path)} · ${p.changes} files would change. Nothing has been written.</p>
     <div class="row">${p.summary.parts.map(key => `<label class="switch"><input type="checkbox" data-import-part="${key}" ${choices.parts.includes(key) ? "checked" : ""}><div>${PROJECT_PARTS[key]}</div></label>`).join("")}</div>
-    ${p.contains_book_text ? '<div class="banner small">This project contains book text in its speaker assignments. Keep it private.</div>' : ""}
+    ${p.contains_book_text ? '<div class="banner small">This project contains book text in its speaker assignments and may include edited spoken versions. Review override notices below and keep it private.</div>' : ""}
     <div style="overflow:auto"><table class="chapters"><thead><tr><th>Part</th><th>Name</th><th>Action</th><th>Details / choice</th></tr></thead><tbody>
       ${p.items.map(item => `<tr><td>${esc(item.kind)}</td><td>${esc(item.name)}</td><td>${esc(item.action)}</td><td>
         ${esc(item.reason || "")}
@@ -946,7 +1025,7 @@ const GUIDE = [
   { route: "#/", title: "4. Analyze and review",
     text: "Open the volume and start the job. The app finds the dialogue and who speaks. Lines it is unsure about wait for you under <b>Needs review</b>: open the chapter and click the yellow label to choose the speaker." },
   { route: "#/settings", target: "#view .card", title: "5. Generate and export",
-    text: "Choose the export format here: MP3 for chapters, M4B for a whole volume with chapter markers. Optional MP4 video is off by default; enable it below or use Create video on a generated chapter. Jobs run in the background; finished chapters are kept when you stop." },
+    text: "Choose the export format here: MP3 for chapters, M4B for a whole volume with chapter markers. Optional MP4 video is off by default; enable it in the Video section or use Create video on a generated chapter. Jobs run in the background; finished chapters are kept when you stop." },
   { route: "#/", target: "#guide-button", title: "You're ready",
     text: "Start with one chapter and listen before generating a long volume. Use <b>Project</b> to back up or move your cast, fixed voices, settings and speaker assignments. Reopen this guide anytime from <b>Guide</b>." },
 ];

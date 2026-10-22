@@ -16,6 +16,7 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 
 - Application, installer, uninstaller, archive validation and UI helper tests.
 - Local server Host/Origin restrictions, model hashes, safe archive extraction and process ownership.
+
 - Native Base fixed-voice, Voice Design and CustomVoice synthesis on RTX 4080 Laptop.
 - Regression samples from the expanded GPU build matched the previous engine's WAV files byte for byte.
 - CPU and CUDA speaker encoders returned finite 2048-dimensional vectors with matching results.
@@ -24,15 +25,63 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 
 To run the source tests and reproduce a Windows build, see [docs/BUILD.md](docs/BUILD.md).
 
-## Installation-local model staging
+## Installed folders and safe updates (2026-10-22)
 
-The current packaged source passes 212 Python tests (138 application + 74 distribution) and 12 Node tests.
-Six added installer regressions cover moving verified Qwen files and Gemma blobs from `Local Models`
-into `models`, retaining the same filesystem file identity without copying model data, retry after an
-interrupted transfer, invalid bytes/destination conflicts, junction refusal and preservation of extras.
-An explicitly external model library is copied and left unchanged. Post-move verification failures
-retain the moved file and report its location. Tests use small invented model bytes and fake runtime
-setup/verification; they do not constitute another real-model or clean-Windows installation test.
+The installed layout separates `Data/Program`, `Data/User` and `Data/State`; finished media is under
+`Audiobooks`, private snapshots under `Backups`, and models remain in `models` without duplicate copies.
+The initial release settings/reference bytes are unchanged. Application tests use the same logical
+media URLs while checking their new physical destinations and rejecting paths outside the allowed roots.
+
+- 168 application + 96 distribution tests (264 Python total), and 27 Node tests passed locally.
+- Legacy fixtures retain settings, fixed WAVs, scripts, generated audio, exports and external books.
+  Every move boundary and the ready-before-commit boundary were interrupted and resumed; rollback,
+  destination conflicts, changed files, invalid references and unfinished Project imports were exercised.
+  An unfinished Project import is explicitly refused before moving anything; recover it in the existing
+  app first. Internal source locations are remapped; old snapshot archives themselves are not rewritten.
+- Synthetic program publication verifies staging hashes, journal/preimages, resume, rollback and a
+  reinstall that keeps user settings instead of overwriting them with the public demo state.
+- A synthetic old backup was previewed without writes, applied, interrupted and resumed with the reviewed
+  plan hash. WAVs/audio/export bytes were verified, modification times preserved, and old code/models
+  excluded. Tampered backup data was refused before changing the restored data. Restore preimages are retained.
+- Uninstaller fixtures exercise both layouts. Default removal keeps user data, audiobooks, backups and
+  models; explicit data deletion does not delete the other categories. Existing identity metadata allows
+  reinstall. Linked parent folders are refused before removal; browser-profile links never delete their targets.
+  A preimage-directory junction regression also refuses a program update before it can write outside the installation.
+- The actual compiled launcher resolves its SDK from Data/Program with no root-level DLL copies.
+  Native desktop lifecycle tests still use the real installed WebView2 Runtime and synthetic backends.
+- Folder actions target the external chapter source, Audiobooks, chapter work and the video file's folder.
+  The native-runtime restoration helper accepts both old and new release payload layouts.
+- Paths beyond 260 characters were tested for an explicit early refusal without output. The app uses a
+  conservative 240-character limit for affected file/tool paths; setup also refuses a very long root.
+  This does not claim extended-path support for every Windows component and changes no system policy.
+
+These are synthetic/local checks, not an installation on a clean Windows computer or a restoration of
+the owner's real backup. Those remain separate guided steps; no new speech inference or model download
+was used for the layout change. Existing Undo records/backups retain their original data: a remapped
+internal source can require Locate folder or a new preview rather than silently rewriting old history.
+## Models in the final installation folder
+
+Model-specific checks verify in-place reuse alongside the full source checks listed above.
+Setup creates `models` directly. Exact Qwen files and Gemma blobs supplied there are verified and used
+in place, without a transfer or a second copy. Tests assert unchanged filesystem file identity on a
+second run and reject any attempt to transfer already supplied models. Invalid files and linked
+destinations are rejected; unknown files survive uninstall. An explicitly external model library is
+copied and left unchanged. Model downloads use their final directory and a verified `.part` file.
+These tests use small invented bytes and fake runtime setup/verification, not real models or a clean PC.
+
+## Ordered workflow and manual recovery
+
+Text, Audio and Video actions are grouped in numbered disclosures. Hover shows actions; clicking also
+shows explanations. Every chapter in the selected batch must satisfy the preceding stage. The backend
+checks prerequisites both before queueing and at execution. Automatic runs pause the whole batch when
+text needs review. The explicit Reading option to use the narrator for unresolved dialogue is preserved.
+
+Speaker response schemas constrain batch length and row IDs. Invalid responses apply no assignments;
+text-free diagnostics record batch counts and missing row numbers. An explicit repair uses batches of
+three dialogue lines. Text and speaker controls remain available without a successful AI analysis.
+Manual saves and splits verify the current source hash and unchanged text; viewing a draft writes nothing.
+These checks use synthetic text and mocked responses. The owner's failed chapters have not been rerun,
+and real-model success with the revised schema is not claimed.
 
 ## Chapter batch selection
 
@@ -53,16 +102,33 @@ No new AI inference or model download was used to test this integration.
 - Baseline: 57 application + 54 installer/source tests, and 4 Node tests passed before the port.
 - Before GUI integration: 76 application + 54 installer/source tests (130 Python total), and 4 Node tests.
 - Before project transfer: 102 application + 54 installer/source tests (156 Python total), and 4 Node tests passed.
-- The renderer has 19 tests: timeline boundaries and gaps, omitted tags, long text and names, wrapping,
+- The renderer has 23 tests: timeline boundaries and gaps, omitted tags, long text and names, wrapping,
   transition continuity, cache inputs/lifetime, public file layout and the generic CLI.
-- Another 26 integration tests cover strict video settings and legacy settings, current/outdated cache,
+- Another 28 integration tests cover strict video settings and legacy settings, current/outdated cache,
   interrupted/resumed jobs, actual FFmpeg cancellation, low-space refusal, safe scratch ownership and cleanup
   after an abruptly terminated subprocess, export-before-video ordering, per-chapter errors, measured-only
   estimates, local API restrictions and YouTube timestamps. No real manuscript is used.
-- Encoder selection performs a real NVENC probe and falls back to libx264. Tests use the pinned Gyan
+- H.264 selection performs a real NVENC probe and falls back to a checked libx264 encoder. H.265 and AV1
+  require successful hevc_nvenc / av1_nvenc probes and never fall back to another codec. Failed and successful
+  probes are cached per session, time bounded and run outside the UI event loop and project access gate.
+  Tests use Gyan
   FFmpeg 9.0.2 essentials archive from the installer manifest, verified by SHA-256.
 - That build provides h264_nvenc, libx264, AAC, the fps filter and the concat demuxer. A real synthetic
   encode verifies H.264/AAC, yuv420p, BT.709/tv, 1080p/30 fps and separate video/audio durations and frame count.
+- Codec update (2026-10-22): 165 application + 74 distribution tests passed (239 Python), plus 27 Node tests.
+  Real H.265 and AV1 MP4s also passed ffprobe checks at 720p/30 fps: yuv420p, BT.709/tv, AAC,
+  matching durations, 60 frames for two seconds; HEVC has the hvc1 MP4 tag.
+  Nine additional three-second 1080p synthetic renders compared p4/CQ18, p4/CQ22 and p5/CQ18 for all
+  three NVENC encoders. p4/CQ18 is retained for each: 1.167 / 1.069 / 1.074 seconds respectively,
+  450723 / 497240 / 497370 bytes, decoded-frame RGB PSNR 39.400 / 39.414 / 39.451 dB.
+  CQ22 saved bytes with lower PSNR; p5 showed no consistent meaningful benefit on this tiny fixture.
+  These single-run measurements include rendering, are affected by colour conversion and are not
+  a perceptual score or general benchmark. The mathematical source tone was unchanged by SHA-256.
+  A fixed key captured from pre-codec code proves unchanged H.264 caching; a ready-video and timing
+  regression also checks legacy records. Other-codec keys differ and timing estimates stay separate.
+  Settings/volume/chapter were viewed with invented data in a 1366-pixel browser viewport; Back follows
+  the logical parent and works with Enter. Audio/Video alignment and Georgia were checked in the DOM.
+  Existing README screenshots have not been replaced as part of this codec update.
 - Speaker colour hashing is compared with the public UI's actual JavaScript implementation, including Unicode.
 - The public screenshot and local layout clip use invented dialogue. The clip contains a mathematical test tone;
   no AI engine was started and no private text, voice samples or generated chapters were imported.
@@ -126,7 +192,7 @@ modifies the audio pipeline nor changes approved initial settings or synthetic r
 
 - Before this change: 192 Python tests (138 application + 54 distribution) and 8 Node tests passed.
 - Desktop integration and review corrections passed 206 Python tests (138 application + 68 distribution)
-  and 8 Node tests; the six model-staging tests above bring the current total to 212 Python tests.
+  and 8 Node tests. Current source regression totals are listed above.
 - Thirteen desktop tests use the actual native host and WebView2 with invented HTML and a fake backend:
   origin/profile/identity decisions, tampered SDK rejection, Microsoft signature checking, idle exit,
   running/queued work cancellation and confirmation, unavailable status, host crash, second-instance
@@ -145,7 +211,7 @@ modifies the audio pipeline nor changes approved initial settings or synthetic r
   The real download/install-on-missing-runtime path is not exercised here.
 - Taskbar identity uses Windows' EXE/shortcut inference, avoiding an explicit application ID absent from
   setup's shortcuts. Actual pinning/grouping across Windows versions is still unconfirmed.
-- The dedicated `.desktop` directory is excluded from public source and payload; uninstall removes it
+- The dedicated `Data/State/desktop` directory is excluded from public source and payload; uninstall removes it
   without deleting the shared Microsoft runtime or following links to other browser profiles.
 
 These are development-machine checks. A clean Windows install, a machine without WebView2 Runtime,
@@ -162,3 +228,26 @@ accuracy or audition quality on an 8 GB card.
 
 Automatic tests do not certify voice quality or correct dialogue attribution. Review uncertain speaker
 assignments and listen to important passages before exporting a complete audiobook.
+
+## Reading-voice rules and volume management (2026-10-22)
+
+The actual speaker is preserved separately from the reading voice. Global, chapter and text-bound line overrides use one resolver; character references do not chain. Rule edits are previewed, revalidated and journalled using the existing project transaction mechanism, with protected Undo. Splitting/re-analysis flags stale line overrides. Project archives preserve the optional voice-rule metadata.
+
+Eleven additional synthetic tests cover precedence, restoration of own voice, non-chaining references, stale previews, Undo conflicts, byte restoration, cache reuse, speech tags, archive round trips, cast counts, volume relinking/removal and busy-queue refusal. Browser checks on an isolated synthetic workspace exercised line preview/apply/Undo and volume folder editing. No Qwen/Gemma inference or real-owner installation/import was performed for this change. Actual own/narrator audition quality remains for the user's listening test.
+
+Volume Edit relinks the source folder and retains the stable volume name. Remove forgets the library entry without deleting files.
+
+## Readability and separate spoken text (2026-10-22)
+
+Cast uses native collapsed disclosures, changed/unchanged groups, usage sorting and a nested unused group. Characters retains the existing field identities under folded detection and creation sections, with focusable, described help and Escape dismissal. Back occupies 50% of window height, with 30% resting opacity, full opacity on focus/hover and reduced-motion support.
+
+Spoken edits are independent of source rows. Preview performs no writes; saving revalidates the script and uses the existing durable transaction journal. Restoring the original recovers the original passage keys. Splitting, re-analysis, speaker changes and manual re-preparation retain stale edits for review. Both multi-voice and single-voice rendering use saved spoken versions. No emotion classifier or automatic punctuation rewrite is claimed. The optional cleanup only adjusts punctuation spacing and duplicate !/? in dialogue after user review.
+
+No real-model synthesis, owner installation/import, private manuscript access or publication was performed for this change. Audible prosody remains to be checked by the owner. Per-character temperature remains a plan, not an implemented setting.
+
+
+## Character registry and categories (2026-10-22)
+
+Verified with invented chapters: legacy defaults, explicit own-voice preservation, category inheritance, line/chapter precedence, volume-scoped provisional identities and reuse, review gating, staged JSON import, stale previews, merge transactions, project archive round trips, and video-only label invalidation. Browser checks cover category creation/reorder, moving a character, preview/apply, select-all followed by deselect-all, Voice studio navigation, and unsaved-change protection. At a 1000-pixel window the table scrolls within its container without overflowing the document. Georgia and the existing warm palette are preserved.
+
+The expanded Gemma request and category suggestions are tested structurally; no real-model analysis or synthesis was run for this feature. Multi-volume attribution quality, long-session performance, drag-and-drop across all Windows/DPI configurations, and interrupted native desktop sessions remain unverified. The owner installation and manuscripts were not modified.

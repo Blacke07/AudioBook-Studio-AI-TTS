@@ -37,7 +37,7 @@ class GpuProbe {
                             '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll',
                             '/resource:' + str(ROOT / 'manifest.json') + ',manifest.json',
                             '/out:' + str(output), str(probe), str(ROOT / 'installer/Setup.cs'),
-                            str(ROOT / 'installer/DesktopRuntime.cs')],
+                            str(ROOT / 'installer/DesktopRuntime.cs'), str(ROOT/'installer/InstallationPaths.cs')],
                            check=True, capture_output=True)
             for capability, memory, driver in cases:
                 with self.subTest(capability=capability, memory=memory, driver=driver):

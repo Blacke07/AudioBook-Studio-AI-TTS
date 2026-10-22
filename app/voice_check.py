@@ -11,10 +11,11 @@ from threading import Lock
 import numpy as np
 
 import model_profile
-from project import ROOT
+from project import LAYOUT
+ROOT = LAYOUT.program
 
 TOOL = ROOT / "engine" / "build" / "spk-batch.exe"
-BASE = ROOT / "models" / model_profile.CURRENT["base"]
+BASE = LAYOUT.models / model_profile.CURRENT["base"]
 CUDA = ROOT / "engine" / "cuda"
 MEAN = ROOT / "assets" / "voice_mean.npy"
 MIN_SECONDS = 1.2   # shorter clips ("Yes.") give unreliable fingerprints

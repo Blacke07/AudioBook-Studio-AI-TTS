@@ -9,6 +9,11 @@ import subprocess
 import sys
 from urllib.request import Request, urlopen
 import zipfile
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'app'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from layout import Layout, MARKER, LAYOUT_VERSION, safe_destination
+import migration
+import publication
 
 
 def sha256(path):
@@ -144,24 +149,24 @@ def check_hardware(profile, name, capability, memory, driver, policy):
         raise RuntimeError('Update the NVIDIA driver to version ' + policy['min_driver'] + ' or later for CUDA 12.8.')
 
 
-def import_model(source, target, item, staging=None):
-    """Consume installation-local staging files by rename; preserve external model libraries."""
+def model_matches(target, item):
+    target = Path(target).absolute()
+    if target.resolve() != target:
+        raise RuntimeError('The models destination must not use links: ' + str(target))
+    return matches(target, item)
+
+
+def import_model(source, target, item):
+    """Use files already at their final path; preserve explicitly supplied external libraries."""
     source, target = Path(source), Path(target)
     if target.exists():
-        if not matches(target, item):
+        if not model_matches(target, item):
             raise RuntimeError('A different file already exists at the destination: ' + str(target))
         return
     if not matches(source, item):
         raise RuntimeError('Selected file does not match the pinned model: ' + str(source))
-    move = staging is not None and source.absolute().is_relative_to(Path(staging).absolute())
-    if move and (source.resolve() != source.absolute() or target.resolve() != target.absolute()):
-        raise RuntimeError('Local Models staging and destination must not use links: ' + str(source))
+    model_matches(target, item)  # Refuse linked destinations even before the file exists.
     target.parent.mkdir(parents=True, exist_ok=True)
-    if move:
-        source.rename(target)  # Same installation/disk: preserve the file instead of duplicating gigabytes.
-        if not matches(target, item):
-            raise RuntimeError('Moved model failed verification; file retained at: ' + str(target))
-        return
     temporary = target.with_name(target.name + '.install-part')
     shutil.copyfile(source, temporary)
     if not matches(temporary, item):
@@ -172,7 +177,8 @@ def import_model(source, target, item, staging=None):
 
 def install(args):
     root = args.target.resolve()
-    marker = root / '.studio-install-incomplete'
+    layout = Layout(root)
+    marker = root / MARKER
     if not marker.is_file() or marker.read_text(encoding='ascii').strip() != 'AudioBookStudio-Installer-1':
         raise RuntimeError('This folder was not prepared by the installer. Existing applications will not be overwritten.')
     source = json.loads(args.manifest.read_text(encoding='utf-8-sig'))
@@ -186,17 +192,25 @@ def install(args):
                            'caches and models.')
     if not matches(args.bundle, manifest['payload']):
         raise RuntimeError('The application bundle failed SHA-256 verification.')
+    layout.prepare()
+    if migration.migrate(root):
+        print('Legacy data migrated and verified; models stayed in place.', flush=True)
     print('Extracting the application...', flush=True)
-    safe_extract(args.bundle, root)
-    (root / 'installation-manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
-    python = root / 'runtime/python/python.exe'
-    venv = root / '.venv'
+    staging = safe_destination(root,layout.state / 'install')
+    safe_extract(args.bundle, staging/'payload')
+    if any(layout.user.iterdir()) and not publication.journal(root).exists():
+        from state import collect
+        collect(layout.user)  # Invalid/partial author data must never be replaced with defaults.
+    initial = publication.publish(root, staging/'payload', manifest)
+    manifest['layout_version'] = LAYOUT_VERSION
+    migration.write_json(layout.manifest, manifest)
+    python = layout.program / 'runtime/python/python.exe'
+    venv = layout.program / '.venv'
     if not (venv / 'Scripts/python.exe').exists():
         run([python, '-m', 'venv', '--copies', venv])
     vpython = venv / 'Scripts/python.exe'
     run([vpython, '-m', 'pip', 'install', '--disable-pip-version-check', '--require-hashes',
-         '--only-binary=:all:', '-r', root / 'requirements.lock'])
-    staging = root / '.install'
+         '--only-binary=:all:', '-r', layout.program / 'requirements.lock'])
     staging.mkdir(exist_ok=True)
     args.cache.mkdir(parents=True, exist_ok=True)
     print('Installing portable FFmpeg...', flush=True)
@@ -205,33 +219,31 @@ def install(args):
     candidates = list((staging / 'ffmpeg').glob('*/bin/ffmpeg.exe'))
     if len(candidates) != 1:
         raise RuntimeError('The FFmpeg archive has an unexpected layout.')
-    destination = root / 'tools/ffmpeg'
+    destination = layout.program / 'tools/ffmpeg'
     destination.mkdir(parents=True, exist_ok=True)
     for filename in ('ffmpeg.exe', 'ffprobe.exe'):
         shutil.copyfile(candidates[0].with_name(filename), destination / filename)
-    ffmpeg_notices = root / 'licenses/ffmpeg'
+    ffmpeg_notices = layout.program / 'licenses/ffmpeg'
     ffmpeg_notices.mkdir(parents=True, exist_ok=True)
     for file in candidates[0].parent.parent.iterdir():
         if file.is_file():
             shutil.copyfile(file, ffmpeg_notices / file.name)
     print('Installing portable Ollama without a global service...', flush=True)
-    safe_extract(download(manifest['ollama'], args.cache), root / 'tools/ollama')
-    if not (root / 'tools/ollama/ollama.exe').is_file():
+    safe_extract(download(manifest['ollama'], args.cache), layout.program / 'tools/ollama')
+    if not (layout.program / 'tools/ollama/ollama.exe').is_file():
         raise RuntimeError('The Ollama archive has an unexpected layout.')
     for item in manifest['models']:
         target = root / 'models' / item['name']
-        if matches(target, item):
+        print('Checking local model: ' + item['name'], flush=True)
+        if model_matches(target, item):
             continue
         if args.manual_models is not None:
             source = args.manual_models / item['name']
-            print('Checking local model: ' + item['name'], flush=True)
         else:
-            source = download(item, args.cache)
-        if args.manual_models is None:
             target.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(target)
-        else:
-            import_model(source, target, item, staging=root / 'Local Models')
+            download(item, target.parent)
+            continue
+        import_model(source, target, item)
     print('Preparing the pinned Gemma dialogue model...', flush=True)
     ollama_models = root / 'models/ollama'
     repository, version = ollama_location(manifest['gemma']['tag'])
@@ -241,28 +253,30 @@ def install(args):
         record = {'name': filename, 'size': item['size'], 'sha256': digest,
                   'url': f'https://registry.ollama.ai/v2/library/{repository}/blobs/' + item['digest']}
         target = ollama_models / 'blobs' / filename
-        if matches(target, record):
+        print('Checking local model: ' + filename, flush=True)
+        if model_matches(target, record):
             continue
-        source = args.manual_models / 'ollama/blobs' / filename if args.manual_models is not None else download(record, args.cache)
         if args.manual_models is None:
             target.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(target)
+            download(record, target.parent)
         else:
-            import_model(source, target, record, staging=root / 'Local Models')
+            import_model(args.manual_models / 'ollama/blobs' / filename, target, record)
     gemma_manifest = ollama_models / 'manifests/registry.ollama.ai/library' / repository / version
     gemma_manifest.parent.mkdir(parents=True, exist_ok=True)
     gemma_manifest.write_bytes(bytes.fromhex(manifest['gemma']['content_hex']))
     env = os.environ.copy()
     env['PATH'] = str(destination) + os.pathsep + env['PATH']
     print('Verifying the installation without generating audio...', flush=True)
-    run([vpython, root / 'verify_installation.py', '--initial-state'], cwd=root, env=env)
-    run([vpython, '-m', 'unittest', 'test_dialogue', 'test_auto_speakers', 'test_project'], cwd=root, env=env)
+    run([vpython, '-B', layout.program / 'verify_installation.py', *(['--initial-state'] if initial else [])],
+        cwd=layout.program, env=env)
+    migration.finish(root)
+    publication.finish(root)
     marker.unlink()
     print('FINAL VERIFICATION PASSED. Models, Python and the application are ready.', flush=True)
 
 
 def main(args):
-    marker = args.target / '.studio-install-incomplete'
+    marker = args.target / MARKER
     if not marker.is_file() or marker.read_text(encoding='ascii').strip() != 'AudioBookStudio-Installer-1':
         print('ERROR: folder not prepared by the installer; existing applications will not be overwritten.', file=sys.stderr)
         return 1
@@ -270,7 +284,9 @@ def main(args):
         def __init__(self, output, log): self.output, self.log = output, log
         def write(self, text): self.output.write(text); self.log.write(text); self.log.flush()
         def flush(self): self.output.flush(); self.log.flush()
-    with (args.target / 'install.log').open('a', encoding='utf-8') as log:
+    log_path = Layout(args.target).state/'logs/install.log'
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open('a', encoding='utf-8') as log:
         original_out, original_error = sys.stdout, sys.stderr
         sys.stdout = Tee(original_out, log)
         sys.stderr = Tee(original_error, log)

@@ -9,6 +9,7 @@ from io import BytesIO
 import json
 import math
 from pathlib import Path
+from threading import Lock
 import shutil
 import subprocess
 import time
@@ -72,8 +73,11 @@ class VideoSettings:
     fps: int = 30
     enabled: bool = False
     footer: str = ''
+    codec: str = 'h264'
 
     def __post_init__(self):
+        if not isinstance(self.codec, str) or self.codec not in ('h264', 'h265', 'av1'):
+            raise ValueError('Video codec must be h264, h265 or av1.')
         if any(type(value) is not int for value in (self.width, self.height, self.before, self.after, self.fps)):
             raise ValueError('Video dimensions and context counts must be whole numbers.')
         if any(type(value) is not bool for value in (self.show_omitted, self.progress_bar, self.enabled)):
@@ -95,6 +99,9 @@ class VideoSettings:
         """Automation changes when video runs, not its pixels or measured rendering cost."""
         values = asdict(self)
         del values['enabled']
+        # Preserve keys and timing records created before the codec selector existed.
+        if self.codec == 'h264':
+            del values['codec']
         return values
 
 
@@ -173,6 +180,11 @@ def cache_key(audio, script, meta, settings, *, volume, title):
     digest = hashlib.sha256(_audio_hash(str(audio), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
     digest.update(json.dumps([RENDER_VERSION, script, meta, settings.render_options(), volume, title],
                              sort_keys=True, ensure_ascii=False).encode('utf-8'))
+    from character_registry import labels
+    used = {row[0] for row in script.get('rows', [])}
+    video_labels = {name:label for name,label in labels().items() if name in used}
+    if video_labels:
+        digest.update(json.dumps(video_labels, sort_keys=True, ensure_ascii=False).encode('utf-8'))
     return digest.hexdigest()
 
 
@@ -230,7 +242,9 @@ class Renderer:
                                  if settings.show_omitted or not entry.omitted]
         self.index_map = {original: index for index, original in enumerate(self.original_indices)}
         self.lines = [wrap_text(entry.text, self.text_font, self.text_width) for entry in self.entries]
-        self.names = [wrap_text(entry.role, self.name_font, 270) for entry in self.entries]
+        from character_registry import labels
+        display = labels()
+        self.names = [wrap_text(display.get(entry.role, entry.role), self.name_font, 270) for entry in self.entries]
         name_heights = [20 + (len(lines) - 1) * 34 + max(self.name_font.getbbox(line)[3] for line in lines) + 10
                         for lines in self.names]
         self.active_heights = [max(116, name_height, min(260, len(lines) * self.line_height + 44))
@@ -418,7 +432,7 @@ class VideoCancelled(Exception):
     """A requested stop; completed chapter files are kept."""
 
 
-def run_ffmpeg(arguments, should_stop=None, progress=None):
+def run_ffmpeg(arguments, should_stop=None, progress=None, *, timeout=None):
     bundled = Path(__file__).resolve().parent / 'tools/ffmpeg/ffmpeg.exe'
     executable = str(bundled) if bundled.is_file() else shutil.which('ffmpeg')
     if not executable:
@@ -426,7 +440,7 @@ def run_ffmpeg(arguments, should_stop=None, progress=None):
     command = [executable, '-hide_banner', '-loglevel', 'error', '-nostdin', *arguments]
     if should_stop is None:
         return subprocess.run(command, capture_output=True, text=True, encoding='utf-8',
-                              errors='replace', creationflags=FLAGS)
+                              errors='replace', creationflags=FLAGS, timeout=timeout)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                encoding='utf-8', errors='replace', creationflags=FLAGS)
     try:
@@ -449,17 +463,54 @@ def run_ffmpeg(arguments, should_stop=None, progress=None):
                 process.communicate()
 
 
-@lru_cache(maxsize=1)
-def choose_encoder():
-    """Probe an actual encode, rather than assuming a compiled NVENC encoder can run."""
-    result = run_ffmpeg(['-f', 'lavfi', '-i', 'color=s=1920x1080:r=30', '-frames:v', '1',
-                         '-c:v', 'h264_nvenc', '-f', 'null', '-'])
-    return 'h264_nvenc' if result.returncode == 0 else 'libx264'
+CODECS = {'h264': ('H.264', 'h264_nvenc'), 'h265': ('H.265 (HEVC)', 'hevc_nvenc'),
+          'av1': ('AV1', 'av1_nvenc')}
+_probe_lock = Lock()
+
+
+@lru_cache(maxsize=3)
+def _probe_codec(codec):
+    label, encoder = CODECS[codec]
+    try:
+        result = run_ffmpeg(['-f', 'lavfi', '-i', 'color=s=1920x1080:r=30', '-frames:v', '3',
+                             *encoding_args(encoder), '-pix_fmt', 'yuv420p', '-f', 'null', '-'], timeout=15)
+        if result.returncode == 0:
+            return {'available': True, 'encoder': encoder, 'reason': 'NVIDIA NVENC'}
+        reason = 'NVENC could not encode on this computer. Check GPU, driver and FFmpeg support.'
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        reason = 'FFmpeg or NVENC is unavailable, or its encoding check timed out.'
+    if codec == 'h264':
+        # H.264 retains its established CPU path, but verify that it works too.
+        try:
+            result = run_ffmpeg(['-f', 'lavfi', '-i', 'color=s=1920x1080:r=30', '-frames:v', '3',
+                                 *encoding_args('libx264'), '-pix_fmt', 'yuv420p', '-f', 'null', '-'], timeout=15)
+            if result.returncode == 0:
+                return {'available': True, 'encoder': 'libx264', 'reason': 'CPU (libx264); NVENC unavailable'}
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            pass  # Report an unavailable codec; never claim a successful check.
+    return {'available': False, 'encoder': None, 'reason': f'{label}: {reason}'}
+
+
+def codec_capabilities():
+    """Session-local real checks. The API runs these in a thread, outside the UI event loop."""
+    with _probe_lock:
+        return {codec: dict(_probe_codec(codec)) for codec in CODECS}
+
+
+def choose_encoder(codec='h264'):
+    if codec not in CODECS:
+        raise ValueError('Unsupported video codec.')
+    with _probe_lock:
+        capability = _probe_codec(codec)
+    if not capability['available']:
+        raise RuntimeError(capability['reason'])
+    return capability['encoder']
 
 
 def encoding_args(encoder):
-    if encoder == 'h264_nvenc':
-        return ['-c:v', encoder, '-preset', 'p4', '-rc', 'vbr', '-cq', '18', '-b:v', '0']
+    if encoder in ('h264_nvenc', 'hevc_nvenc', 'av1_nvenc'):
+        args = ['-c:v', encoder, '-preset', 'p4', '-rc', 'vbr', '-cq', '18', '-b:v', '0']
+        return args + (['-tag:v', 'hvc1'] if encoder == 'hevc_nvenc' else [])
     if encoder == 'libx264':
         return ['-c:v', encoder, '-preset', 'fast', '-crf', '18']
     raise ValueError('Unsupported video encoder.')
@@ -503,14 +554,17 @@ def render_clip(renderer, audio, target, start=0, seconds=None, encoder=None, *,
         sample = BytesIO()
         renderer.frame(start + spans[index][0]/fps).save(sample, format='PNG', compress_level=1)
         sizes.append(sample.tell())
-    temporary_root = Path(temp_root) if temp_root else project.WORK / 'video-temp'
+    temporary_root = Path(temp_root) if temp_root else target.parent / '.video-temp'
+    from layout import check_path_length
+    check_path_length(target)
+    check_path_length(temporary_root/'render-00000000/frame-000000.png')
     frames_bytes = math.ceil(sum(sizes)/len(sizes) * len(spans) * 2)
     output_bytes = max(64*1024**2, math.ceil(seconds * 2*1024**2))
     from video_jobs import check_space, temporary_frames, publish_file
     check_space(temporary_root, frames_bytes + output_bytes)
     check_space(target.parent, output_bytes)
     target.parent.mkdir(parents=True, exist_ok=True)
-    encoder = encoder or choose_encoder()
+    encoder = encoder or choose_encoder(renderer.settings.codec)
     progress(0, f'Video encoder: {encoder}')
     count = 0
     with temporary_frames(temporary_root) as temporary:
@@ -550,7 +604,7 @@ def render_clip(renderer, audio, target, start=0, seconds=None, encoder=None, *,
                              '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
                              '-movflags', '+faststart', str(partial)], should_stop, encoding_progress)
         if result.returncode:
-            raise RuntimeError('Video encoding failed: ' + result.stderr[-1600:])
+            raise RuntimeError(f'{CODECS[renderer.settings.codec][0]} video encoding failed ({encoder}): ' + result.stderr[-1600:])
         if should_stop():
             raise VideoCancelled('Video stopped; completed chapters are kept.')
         if target.exists():

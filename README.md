@@ -1,422 +1,168 @@
-<p align="center">
-  <img src="assets/audiobook.png" width="96" alt="AudioBook Studio icon">
-</p>
+# AudioBook Studio
 
-<h1 align="center">AudioBook Studio</h1>
+Turn English TXT or DOCX chapters into an audiobook on your Windows computer. Use a narrator, fixed character voices, and optional videos with synchronized reading text.
 
-<p align="center">
-  <b>Turn your English manuscript into a full-cast audiobook, on your own computer.</b><br>
-  A narrator and a fixed voice for every character, kept the same from the first chapter to the last.<br>
-  No cloud, no account, no uploads.
-</p>
+**[Download the current installer](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe)** · [All downloads](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest) · [Report a problem](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues)
 
-<p align="center">
-  <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
-  <img alt="NVIDIA RTX 20–50, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2020%E2%80%9350%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
-  <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20locally-e27a4b">
-  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
-</p>
+Your manuscripts are read without being modified. Speaker analysis and voice generation run locally. Internet access is needed to download installation components and models; no online voice account is required.
 
-<p align="center">
-  <a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest"><b>Download</b></a> ·
-  <a href="#install-in-four-steps">Install</a> ·
-  <a href="#your-first-audiobook">First audiobook</a> ·
-  <a href="#ready-made-voices">Voices</a> ·
-  <a href="#questions">FAQ</a>
-</p>
+## What is included
 
-![The chapter editor: every line shows who speaks it](docs/screenshots/chapter.png)
+- A desktop window with its own launcher, shortcuts, remembered window position, and confirmation before stopping active work.
+- Local speaker attribution with Gemma and speech generation with Qwen3-TTS.
+- Two ready-made narrators and seven synthetic character voices, plus Voice Design and built-in speaker auditions.
+- A character registry with categories, reading-voice policies, provisional identities, and quick editing.
+- A chapter editor for manual speaker assignments, reading-voice overrides, and separate spoken-text edits.
+- Chapter audio, whole-volume audiobook export, optional MP4 reading videos, and YouTube chapter timestamps.
+- Project import/export with a preview, conflict choices, automatic import backups, and Undo.
 
----
+## Install
 
-## What it does
+1. Download **AudioBookStudio-Setup.exe** from the current release.
+2. Put it in an empty local folder, such as `D:\AudioBook Studio`. Setup installs into that folder. A recognized existing installation can also be updated after closing the app; unknown nonempty folders are refused.
+3. Choose **Standard** or **Compact**, then choose automatic model downloads or supply your own model files.
+4. Click **Install**. When setup finishes, choose **Open AudioBook Studio** and optionally create shortcuts.
 
-| | |
+Setup installs a private Python environment, pinned dependencies, the native voice engine, FFmpeg and portable Ollama. Miniconda, PyTorch and a system Python installation are not required. Downloads are checked by size and SHA-256.
+
+Microsoft WebView2 Runtime provides the desktop window. If it is missing, setup asks before downloading and installing it. The shared runtime remains installed when AudioBook Studio is removed and receives Microsoft's own updates.
+
+The installer is unsigned. Compare its SHA-256 with `SHA256SUMS.txt` from the same release.
+
+### Requirements
+
+| Component | Requirement |
 | --- | --- |
-| 📖 **Reads your chapters** | Point it at a folder of numbered `.txt` or `.docx` chapters. Your files are only read, never changed. |
-| 🗣️ **Finds who is speaking** | A local AI model (Gemma) works out which character says each line. Anything uncertain waits for you instead of being guessed. |
-| 🎙️ **One voice per character** | Describe a voice in plain English, listen to a few takes and **fix** the one you like. That character sounds the same in every chapter. |
-| 🎧 **Ready-made voices** | Nine voices ship with the app: two narrators and seven characters. Pick one in a click and change it whenever you like. |
-| 📦 **Exports a real audiobook** | WAV or MP3 per chapter, or a whole volume as one audiobook file with chapter markers. |
-| 🎬 **Optional reading video** | Create an MP4 from existing chapter audio, with highlighted text, speaker names and scrolling context. Export YouTube chapter timestamps, too. |
-| 💾 **Project backup and transfer** | Save settings, cast, fixed voices and speaker assignments in an `.abstudio` file. Preview imports, resolve conflicts and undo an import. |
-| 🖥️ **Its own desktop window** | Launch from an EXE or shortcut, without browser tabs. Restore the existing window when launched again, and confirm before stopping active work. |
-| 🔒 **Private by design** | Text, voices and audio stay on your computer. No telemetry, no sign-in, no online voice service. |
-| 🧭 **Guided** | A short step-by-step guide opens the first time. Skip it, or reopen it anytime from **Guide**. |
+| Windows | Windows 10 or 11, x64, with an AVX2-capable CPU |
+| GPU | Supported NVIDIA RTX 20/30/40/50 architecture, driver 570.65 or newer |
+| Standard | At least 12 GB VRAM and 40 GB free disk space |
+| Compact | At least 8 GB VRAM and 25 GB free disk space; experimental |
+| RAM | 32 GB recommended |
 
-## How it works
-
-```mermaid
-flowchart LR
-    A["📁 Your chapters<br/>TXT or DOCX"] --> B["🗣️ Who speaks?<br/>Gemma, local"]
-    B --> C["✅ You review<br/>uncertain lines"]
-    C --> D["🎙️ Fixed voices<br/>Qwen3-TTS, local"]
-    D --> E["🎧 Chapter audio"]
-    E --> F["📦 MP3 / audiobook<br/>FFmpeg"]
-```
-
-Everything in this chain runs on your machine. Internet is needed to download installation components
-and models. The shared Microsoft WebView2 Runtime receives Microsoft's own updates; see [privacy](PRIVACY.md).
-
-## New in the current build
-
-- **Desktop window:** native title and icon, remembered size and position, notification-area controls,
-  native Save dialogs and video previews. If the embedded browser crashes, work continues and the
-  window can be reopened without restarting the server.
-- **Reading videos:** create a chapter's MP4, batch selected chapters, or add video to automatic processing.
-  Audio is reused, video has its own status, and interrupted renders leave completed chapters intact.
-- **Project transfer:** export the parts you need, preview an import before writing anything, locate
-  missing chapter folders and keep existing voices by default. Automatic backups support Undo.
-- **Local model installation:** verified files staged in `Local Models` are moved into `models` on the
-  same disk, so installation does not duplicate the model set. Extra files are left in staging.
-
-### The desktop window
-
-The existing interface opens in its own application window. No browser address bar, tabs or personal
-browser profile are used. Closing it checks for running or queued work before stopping the local server.
-
-![AudioBook Studio in its own desktop window](docs/screenshots/desktop.png)
-
-## A quick tour
-
-App screenshots use invented story text and public synthetic voices. Setup screenshots show sample
-states rendered by the current installer; they are not evidence of a clean-machine installation.
-
-### Your volume
-
-Chapters, estimated length and status. One button runs everything: analyze, generate, export.
-
-![A volume with its chapters](docs/screenshots/volume.png)
-
-### The narrator
-
-A warm narrator is fixed from the start. Listen to the alternatives or describe your own.
-
-![Ready-made narrator voices](docs/screenshots/narrator.png)
-
-### Voices for your cast
-
-Give any character a ready-made voice, or design a new one and fix your favorite take.
-
-![Choosing a preset voice for a character](docs/screenshots/presets.png)
-
-### The guide
-
-Seven short steps from an empty app to your first chapter. Skip it or replay it anytime.
-
-![The step-by-step guide](docs/screenshots/guide.png)
-
-## Project backup and transfer
-
-The **Project** page provides `.abstudio` import/export. Choose Settings, Cast and
-fixed voices, or Volumes and speaker assignments separately. Open/Save use native Windows dialogs.
-Preview shows additions, skipped items, settings differences and conflicts before anything is written.
-Existing voices, characters and speaker corrections are kept by default. Settings are opt-in.
-
-Missing chapter folders can be located in the preview. Scripts are skipped when the local chapter text
-or the imported row text does not match. Network/device/relative sources from packages are skipped until
-you locate an absolute local drive folder. Import creates a private backup; **Undo last import** restores the preceding state after
-confirmation and first saves a safety backup of current edits. Stop the queue before transferring.
-
-**Assignments include book text: do not share those packages publicly.** Voice-only exports contain
-references and notes, but omit scripts and real-book audition examples. They can be used as voice packs;
-review their contents first. Generated audio, models, caches and original manuscripts are never included.
-Backups/reports remain local and are excluded from public source and installer packages.
-
-See [project format and safeguards](docs/PROJECT_FORMAT.md) and [privacy](PRIVACY.md).
-Installing the application and importing a project are separate steps.
-
-![Project export, import and automatic backups](docs/screenshots/project.png)
-
-![Import preview with conservative conflict choices and a missing folder](docs/screenshots/project-preview.png)
-
-## Video (optional)
-
-Create optional video for **audio that has already been generated**.
-It highlights the current passage and speaker, with softly faded context and smooth transitions.
-Automatic video is **off by default**; manual video creation is always available for current audio.
-
-1. Open a generated chapter and choose **Create video**. Audio must be current.
-2. Use **Open video** or **Show in folder** after it finishes. Video has its own ready/outdated status.
-3. On a volume, **Create videos** processes the selection, or the whole volume when nothing is selected.
-4. In **Settings and export → Video (optional)**, enable **Also create an MP4 video** to add video after
-   audio export during **Run automatically**. Choose 1080p/720p, context, omitted tags, progress bar and footer.
-5. **Export YouTube chapter list** saves timestamps beside the videos, using their actual MP4 durations.
-   It requires current videos and assumes they will be joined in chapter order without gaps.
-
-![Optional video settings](docs/screenshots/video-settings.png)
-
-![Chapter video actions and separate status](docs/screenshots/video-chapter.png)
-
-![Volume video actions](docs/screenshots/video-volume.png)
-
-The same sequential worker handles audio and video. **Stop** cancels the current video; completed chapter
-videos stay valid and are skipped when queued again. An unfinished chapter restarts its video render.
-Valid videos are reused; changed audio, text, titles or appearance options make them outdated.
-Turning automatic video on or off preserves current videos and measured timing. Video/audio durations
-are checked against the chapter before a new MP4 replaces an old one. Videos are written atomically to
-`export/<volume>/video/`. A video failure is reported separately and does not block other chapters' audio.
-Time estimates appear only after a completed render with matching video settings. Full-volume MP4 joining
-is not included yet; the whole-volume export button continues to export audio.
-
-![Optional video layout with invented dialogue and no personal data](docs/screenshots/video.png)
-
-This is a synthetic layout preview with invented characters. Its local demonstration clip uses a test tone,
-not a spoken or cloned voice. Your own video uses the existing chapter WAV, re-encoded as AAC.
-
-The command-line renderer also remains available from the installation folder:
-
-```powershell
-.\.venv\Scripts\python.exe video.py "work\The Lantern House\001 - The Message" "export\chapter-video.mp4" --volume "The Lantern House"
-```
-
-Replace the example paths with your chapter work folder and a new MP4 filename. The work folder must contain
-`script.json`, `audio.json` and `chapter.wav`. The output is 1080p, 30 fps, H.264/AAC with BT.709 colour tags.
-Use `--start 0 --seconds 30` for a short preview, or omit them for the full chapter. Add `--hide-omitted`
-to hide speech tags omitted from the audio. Existing output files are never overwritten.
-Timing is at passage level; long passages scroll proportionally rather than tracking individual words.
-
-## Install in four steps
-
-1. **Download** [AudioBookStudio-Setup.exe](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe)
-   from the [current release](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest).
-2. **Put it in an empty folder**, for example `D:\AudioBook Studio`. The app installs in that same folder.
-   Use a local disk, not Program Files or the root of a drive.
-3. **Open it and choose**:
-   - the **model set**: **Standard** (12 GB graphics card, about 24 GB of models) or **Compact**
-     (8 GB graphics card, about 12 GB, experimental). Setup picks the one that fits your card;
-   - how to get the models: **Download the models for me** (needs internet), or **I already have the model files**:
-     setup creates a `Local Models` folder and lists exactly what to put there.
-4. **Click Install** and wait. When it says it is ready, click **Open AudioBook Studio**.
-   Setup can add a desktop and Start menu shortcut for you.
-   If Microsoft WebView2 Runtime is missing, setup asks before downloading and installing it.
-
-**Setup: welcome.** Checks your graphics card and free space.
-The screenshot shows models already supplied in `Local Models`.
-
-![Setup: welcome](docs/screenshots/setup-welcome.png)
-
-**Setup: progress.** Step-by-step progress while checking the supplied models. Time estimates appear when available.
-
-![Setup: progress](docs/screenshots/setup-progress.png)
-
-**Setup: finished.** Open the app and add shortcuts.
-
-![Setup: finished](docs/screenshots/setup-finish.png)
-
-### What you need
-
-| | Minimum for this version |
-| --- | --- |
-| System | Windows 10 or 11, 64-bit, CPU with AVX2 |
-| Graphics card | NVIDIA RTX 20, 30, 40 or 50 series, driver 570.65 or newer.<br>**Standard: 12 GB VRAM.** Compact (experimental): 8 GB VRAM. See the hardware verification limits below. |
-| Disk | Standard: **40 GB free** (models about 24 GB). Compact: **25 GB free** (models about 12 GB) |
-| Memory | 32 GB RAM recommended |
-| Internet | Only for the first installation |
-
-The native engine is compiled for CUDA architectures 7.5, 8.0, 8.6, 8.9 and 12.0. Only one machine has been
-tested physically (RTX 4080 Laptop, 12 GB); RTX 20/30/50 hardware remains untested. See
-[VERIFICATION.md](VERIFICATION.md) for exactly what was checked. An RTX 3060 with 12 GB qualifies for Standard;
-an RTX 2080 Ti with 11 GB qualifies only for experimental Compact. Cards with less than 8 GB are refused.
-
-**One current download:** the release and its four assets are replaced together when improvements are
-published. `SHA256SUMS.txt` belongs to the current files; save it with a download if you want to keep
-that exact build. Internal installer and project-file format versions are separate compatibility markers.
+The engine includes CUDA targets 7.5, 8.0, 8.6, 8.9 and 12.0. Physical testing is limited to one RTX 4080 Laptop with 12 GB VRAM. Compiled support for other cards is not confirmation that they have been tested. Cards with less than 8 GB VRAM and other GPU vendors are not accepted by this build.
 
 ### Standard or Compact?
 
-| | **Standard** | **Compact** (experimental) |
+| | Standard | Compact — experimental |
 | --- | --- | --- |
-| Graphics card | 12 GB | 8 GB |
-| Models to download | about 24 GB | about 12 GB |
-| Reading your book with fixed voices | Qwen3-TTS Base | **the same model**, so the same voices |
-| Designing a new voice | Qwen3-TTS, full precision | Qwen3-TTS, 8-bit (smaller) |
-| Finding who speaks | Gemma 4 12B | Gemma 4 E4B (smaller) |
+| Model downloads | About 24 GiB | About 12 GiB |
+| Fixed-reference book reading | Qwen Base | The same Qwen Base model |
+| Voice Design / built-in speaker models | Full precision | Q8 |
+| Speaker attribution | Gemma 4 12B | Gemma 4 E4B |
 
-Fixed voices, including all the ready-made ones, sound the same in both. Compact may make auditions of new voices
-sound slightly different, and its smaller dialogue model may leave more lines for you to review; uncertain lines are
-never guessed silently. Compact has not been measured on an 8 GB card yet, which is why it is marked experimental.
+Both profiles use the same model and recordings for fixed-reference reading. Compact's audition models and speaker-attribution model differ; their memory use, speed and quality have not been measured on an 8 GB card.
 
-<details>
-<summary><b>What setup installs, and what it never touches</b></summary>
+### Supply model files yourself
 
-Setup installs a private Python runtime and `.venv`, pinned Python packages, the native Qwen engine, FFmpeg,
-portable Ollama, four Qwen GGUF files and the exact Gemma dialogue model. Pinned downloads are checked by size and SHA-256.
-It does not need Miniconda, PyTorch or a system Python, and it does not change your system PATH or Python.
-Windows .NET Framework 4.x, PowerShell 5.1 and `tar.exe` must already be available (standard on supported Windows).
+Choose **I already have the model files**, then **Create models folder**. Setup creates the final `models` folder next to the installer, with a list of exact filenames, sizes, hashes and links.
 
-The installer refuses a folder that already holds another application. A failed installation can be retried in its
-own folder after fixing the reported problem; it never silently replaces an existing app. Downloads are cached for a retry.
-The shared Microsoft WebView2 Runtime is checked separately. If missing, setup asks before downloading
-Microsoft's bootstrapper, verifies its Microsoft signature before execution and checks that the Runtime
-became available. It is kept on uninstall. The release is not code-signed yet: compare the download with `SHA256SUMS.txt`.
-</details>
+Place the four requested GGUF files directly in `models`, and the pinned Gemma blobs in `models/ollama/blobs`. Click **Check again**, then **Install**. Those files are verified and used in place, without a second staging folder or duplicate copy. Other installation components still download as needed.
 
-<details>
-<summary><b>Bring your own model files</b></summary>
+## Make your first audiobook
 
-Choose the model set, then **I already have the model files** and click **Create Local Models folder**. Setup creates
-`Local Models` next to the EXE with a `_place models here` file listing every file that model set needs, its size,
-SHA-256 and download link. Switching the model set in setup updates that list.
+1. **Narrator:** keep the supplied narrator, select another preset, or design and fix your own reference voice.
+2. **Characters:** add the cast, organize categories, and choose which voice reads each character.
+3. **Volumes:** add a folder of numbered TXT or DOCX chapters. Edit can relink its folder; Remove forgets the library entry while leaving source files and generated files on disk.
+4. **Analyze Text:** review speaker assignments, newly discovered characters, and any uncertain lines. Failed analysis offers diagnosis and smaller-batch repair. Manual assignments remain available without Gemma.
+5. **Audio:** generate and listen to a sample chapter before processing a full volume. Export chapters or use **Export the whole volume** for an audio audiobook file.
+6. **Video, optional:** create reading videos from current audio after the previous stages are complete.
 
-- Put the four exact `.gguf` files directly in `Local Models`.
-- Put the exact pinned Gemma blobs in `Local Models/ollama/blobs/`
-  (an existing Ollama keeps them in `%USERPROFILE%\.ollama\models\blobs`).
+The ordered **Text → Audio → Video** workflow checks the selected batch before advancing. Completed passages can be reused after an interruption; only passages whose sound changes need new synthesis.
 
-Then click **Check again** and **Install**. Setup checks the size and SHA-256, then moves the verified files
-from `Local Models` into `models` on the same disk. It does not make a second copy of the model set.
-`Local Models` is a staging folder: keep reusable backups elsewhere. Unknown or unused files are left there.
-A missing or different file stops installation with a clear message. Models already moved remain in
-`models`; retry continues from verified files rather than copying them again. A `Local Models` folder
-that holds only the list means automatic download. Python, its packages, FFmpeg and Ollama still download automatically.
-`python tools/model_list.py standard` (or `compact`) prints the same list.
-</details>
+## Characters and reading voices
 
-## Your first audiobook
+**Quick view** provides search, status filters, category assignment, reading-voice selection and quick details. Changes remain a draft until you preview and apply them. **Voice studio** contains the detailed reference, audition and voice-creation tools.
 
-1. **Narrator.** A warm American narrator is already fixed. Keep it, pick the other ready-made narrator, or describe your own.
-2. **Characters.** Add your cast. Click **Use a preset voice**, or describe a voice, listen and click **Fix**.
-   The **Voice personality guide** has a complete prompt and a worked example.
-3. **Volumes.** Add the folder with your chapters. Check the chapter order.
-4. **Analyze.** The app assigns each line to a speaker. Review the lines it is unsure about and any new characters.
-5. **Generate and export.** Listen to one chapter first, then run the whole volume. Work resumes where it stopped.
+Create and reorder categories, edit their descriptions, and move characters individually or in a batch. Drag handles and menu actions provide the same organizing operations. Each category can default to own voices, the narrator, or a shared character reference. Existing fixed voices are preserved as explicit own-voice choices during the first registry migration.
 
-> [!TIP]
-> Listen before long runs. Changing a fixed voice or the generation settings makes the affected passages
-> **Outdated**, and only those are generated again.
+The actual speaker and the reading voice are separate. A minor character may keep a descriptive name in the script and video while the narrator or a shared reference reads the dialogue.
 
-## Ready-made voices
+Reading-voice priority is:
 
-All of them were generated with Qwen3-TTS Voice Design. None is a recording of a real person.
-Each one stores the description, delivery and seed that produced it ([`app/presets/presets.json`](app/presets/presets.json)).
+**Line override → chapter override → explicit character choice → category default → own voice.**
 
-| Voice | Use | Character |
-| --- | --- | --- |
-| **Warm American narrator (40s)** | narrator, default | Warm, grounded middle-low baritone; calm, precise and unhurried. |
-| **Clear library narrator** | narrator | Clear, neutral and composed; the original demo narrator. |
-| **Dry, understated young man** | character | Grounded baritone; states absurd things completely straight. |
-| **Gravelly, deadpan man** | character | Warm, gravelly baritone; big exaggerations told with total sincerity. |
-| **Smooth, courteous, guarded man** | character | Soft, velvety baritone; calm warmth that never raises its voice. |
-| **Hoarse, gloomy drawl** | character | Lazy, slightly hoarse drawl; dark jokes delivered like weather reports. |
-| **Precise, quietly ironic woman** | character | Bright, clear mezzo; polite questions that do the teasing. |
-| **Husky, blunt young woman** | character | Low, slightly husky alto; short lines that end the conversation. |
-| **Soft, shy woman with gentle humor** | character | Slightly breathy, shy at first; steady on facts, laughs at her own jokes. |
+Another character's voice means that character's own reference; voice rules do not chain. Category priority provides organizing context, not permission to override textual evidence about who speaks. Category order and descriptions alone do not invalidate existing audio.
 
-Using a preset works exactly like fixing a take you auditioned: you can edit, unfix or replace it later.
-The narrator starts at temperature **0.55** and seed **42**. Temperature controls how much each take varies;
-the seed makes a take repeatable. The fixed reference recording is what keeps the voice recognizable.
+### New and provisional speakers
 
-## Your data stays yours
+New speakers discovered during analysis are provisional and scoped to their volume. Gemma can suggest a category for a supported identity. Review the passages, correct the details, approve the character, or merge a duplicate into an established identity. Ambiguous assignments remain **Unassigned**.
 
-- Books, voices and audio stay on your computer. There are no analytics and no cloud voice service.
-- Your manuscripts are only read. Removing a volume from the app does not delete the original files.
-- The server answers only this computer's own browser page (`127.0.0.1` / `localhost`) and refuses requests from
-  other websites. Do not expose it to a network.
-- Installation downloads software and models from GitHub, PyPI, Hugging Face and the Ollama registry.
-  Details in [PRIVACY.md](PRIVACY.md).
+**Allow provisional characters to use their assigned reading voice** is off by default. Enabling it permits supported provisional identities to use their assigned voice; it does not bypass unresolved speaker assignments or identities marked **Needs review**.
 
-## Uninstall
+Identity renaming and video labels are separate. Changing only a video label preserves reusable audio and makes affected videos outdated. Merge keeps the target character's reference, refuses conflicting chapter policies, and retains old reference WAVs on disk.
 
-Close the app, then run **Uninstall AudioBook Studio.exe** in the installation folder. It removes what setup installed:
-the application, its private Python, the engine, FFmpeg, Ollama, the models and the shortcuts it created.
-Your settings, characters, fixed voices, generated audio and exports are **kept** unless you choose to delete them.
-Your manuscripts, `Local Models`, the setup EXE and anything else you put in the folder are never touched.
-The download cache in `%LOCALAPPDATA%/AudioBookStudio-Installer` can be deleted separately.
+The volume **Cast and reading voices** section folds by category, with unused characters kept separately. Open a character there, a chapter legend entry, or a line's **Voice** control to edit its reading rule. Preview the affected chapters before applying. Existing voice-rule Undo is protected against overwriting later edits.
 
-## Questions
+### Edit the spoken version
 
-<details>
-<summary><b>Does it work without an NVIDIA graphics card, or with less than 12 GB?</b></summary>
+Use **Edit spoken text** beside a prepared line to adjust the version sent to the voice generator. The manuscript and original script text stay unchanged. Preview before saving; **Restore original** removes the edit.
 
-The voice engine is built for NVIDIA RTX 20, 30, 40 and 50 series cards. With 8 GB of video memory, choose the
-**Compact** model set during setup; it is experimental until it has been measured on an 8 GB card.
-Other GPU brands and CUDA architectures not listed above are not accepted by this build.
-</details>
+**Suggest punctuation cleanup** only adjusts dialogue punctuation spacing and repeated `!` or `?`. It does not infer emotions or rewrite sentences. Punctuation can influence delivery, but does not guarantee a particular intonation. Listen after regeneration.
 
-<details>
-<summary><b>Can I use books in other languages?</b></summary>
+Reanalysis, splitting or speaker changes retain unmatched voice/text overrides for review instead of silently applying them to another line.
 
-The app, its voices and the dialogue analysis are made and tested for English text.
-</details>
+## Project import and export
 
-<details>
-<summary><b>Will a character always get the right voice?</b></summary>
+Use **Project** to export or import an `.abstudio` package. Select settings, characters with fixed references, or volumes with speaker assignments. Preview additions, missing folders and conflicts before applying. Existing data is kept by default; settings are opt-in. An import creates a private backup and supports **Undo last import**.
 
-The app assigns lines it is sure about and asks you about the rest, but AI speaker attribution can be wrong.
-Check the analysis, especially in long dialogues. Voice similarity checks are a help, not a guarantee: listen.
-</details>
+Character categories, reading policies, video labels and spoken-text overrides travel with the relevant project data. Missing chapter folders can be located during import. Assignments are refused when their text does not match the local chapter.
 
-<details>
-<summary><b>Can I move the app to another folder or computer?</b></summary>
+**Import characters** also accepts a JSON glossary. JSON imports are staged, keep existing characters and flag new entries for review. JSON contains recipes and identity facts, not fixed-reference WAV recordings; use an `.abstudio` character-and-voice package to transfer those recordings.
 
-Keep it in the folder where you installed it; its Python environment is tied to that location.
-For another place or computer, export an `.abstudio` package from **Project**, install into a new folder,
-then use **Project → Open project** there. Review the preview and explicitly choose any settings or voice
-replacements. Manuscripts are not inside the package: make them available separately and use **Locate folder**
-if their paths differ. Generated audio and models are not transferred by project export. Keep the old
-installation until you have checked the new one; setup does not overwrite an existing installation.
-</details>
+**Speaker assignments contain book text. Do not share those packages publicly.** Voice packs may contain reference transcriptions and notes, so review them before sharing. Original manuscripts, generated audio, model files and caches are not transferred in project packages. See [project format](docs/PROJECT_FORMAT.md).
 
-<details>
-<summary><b>Which ports does it use?</b></summary>
+## Optional video
 
-The interface opens at `http://127.0.0.1:7863/`. The voice engine uses 7864 and dialogue analysis uses Ollama on 11434.
-An Ollama that is already running is reused only if it has the exact pinned Gemma model.
-`AudioBook Studio.exe` opens its own window, using Microsoft WebView2. There are no browser tabs or
-address bar, and your normal browser profile is not used. Close the application window to stop its
-local server and owned child processes. If work is running or queued, choose **Cancel** to continue or
-**Stop and exit** to quit. A notification-area icon provides **Show window**, **Open startup log**, and
-**Stop and exit**. Starting the same installation again brings its existing window forward.
-If the embedded browser crashes, local jobs keep running. Choose **Reopen window** to restore the
-interface; choosing to exit still checks for running or queued work before stopping the server.
+Create MP4 videos from audio that is already generated and current. Videos show speaker labels, the active passage, and faded scrolling context. Automatic video is off by default.
 
-The window remembers its size and position. Video previews open in owned application windows;
-downloads use a native Save dialog. A dedicated WebView2 profile and window placement live under
-`.desktop` inside the installation and are removed by the uninstaller. The shared Microsoft WebView2
-Runtime is kept. If it is missing, setup asks before downloading and installing it from Microsoft;
-you can instead install it yourself from [Microsoft's WebView2 page](https://developer.microsoft.com/microsoft-edge/webview2/).
-Running `app.py` directly for development still opens the normal browser.
+- Use **Create video** in a chapter or **Create videos** for a volume selection.
+- In **Settings and export → Video**, choose resolution, context, progress bar, footer and codec.
+- Enable **Also create an MP4 video** to include video after audio export during automatic processing.
+- Export YouTube chapter timestamps after creating current chapter videos. The timestamps assume chapters are joined in order without gaps.
 
-</details>
+H.264 uses NVENC when available, with CPU encoding available otherwise. H.265 and AV1 require a successful NVENC capability check; unsupported choices show a reason. Audio is reused and encoded as AAC in the MP4. Video duration is checked before publication, and incomplete output does not replace an existing completed file.
+
+Full-volume MP4 joining is not included. **Export the whole volume** exports audio. Text synchronization is passage-level, rather than individual-word alignment.
+
+## Files, updates and uninstall
+
+| Location | Contents |
+| --- | --- |
+| `Audiobooks/<volume>` | Exported audio, videos and YouTube chapter lists |
+| `Backups` | Project and migration backups |
+| `models` | Qwen and Ollama model files |
+| `Data/User` | Settings, characters, fixed voices, scripts and generated work |
+| `Data/Program` | Replaceable program files and private dependencies |
+| `Data/State` | Installer metadata, logs and desktop profile |
+
+Run **AudioBook Studio.exe** to start the application. Closing its window checks for active or queued work. Starting the same installation again restores its existing window.
+
+Updates recognize the existing installation and preserve user data. Unrecognized folders or conflicting destinations are refused. For another computer, export a project, install there, and preview the import. Keep manuscripts separately and locate their folders when needed; do not move an installed Python environment between folders.
+
+To uninstall, close the app and run **Uninstall AudioBook Studio.exe**. Audiobooks, Backups, models and Data/User are retained by default. Deleting them requires separate explicit choices. Source manuscripts and unknown files are kept. See [privacy](PRIVACY.md) for local services and installation downloads.
+
+There is one rolling release, **current**, with stable filenames. Its assets are replaced together when improvements are published. Save the matching checksum file if you keep an older download.
 
 ## Testing and limitations
 
-> [!NOTE]
-> This is a personal project, tested on one Windows computer with an NVIDIA RTX 4080 Laptop (12 GB).
-> Automated checks and local audio tests have passed, but they do not guarantee that every feature will work
-> on every computer. RTX 20/30/50 cards are included as build targets and have not been tested on physical hardware.
-> Compact remains experimental: its real-model memory use, speed, dialogue accuracy and voice quality have
-> not been measured on an 8 GB card. Installation on a clean Windows system and full uninstallation still
-> need validation. The installer is unsigned.
-> The missing-WebView2 download/install path, taskbar grouping on other Windows systems and closing a real
-> long generation from the desktop window remain unverified. Browser-crash recovery and busy/queued exit
-> handling were tested with a fake backend, without running models.
+This is a personal project, tested on one Windows computer with an RTX 4080 Laptop, 12 GB. The current checks passed **309 Python tests** (212 application and 97 distribution tests) and **35 Node tests**, plus targeted browser checks, public-content auditing and package integrity verification.
 
-The current build passed **212 Python tests and 12 Node tests**, including tests run from the packaged source.
-This is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
-and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
-If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in
-[Issues](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues). Please leave out private manuscripts,
-personal audio and other sensitive information.
+Those checks do not guarantee operation on every computer. Physical RTX 20/30/50 hardware, Compact on an 8 GB card, clean-Windows installation, and the missing-WebView2 installation path remain unverified. Native desktop lifecycle tests use a fake backend for several interruption scenarios.
 
-## For developers
+The new character registry has automated and browser coverage, but its expanded Gemma category suggestions have not been measured with real-model runs. Large projects, drag-and-drop across Windows/DPI configurations, and long sessions need further testing. Review speaker assignments and listen before generating a whole book. See [VERIFICATION.md](VERIFICATION.md) for details.
 
-The repository contains the app, the installer and uninstaller, tests, the voice presets and assets.
-Models, downloaded runtimes, build output and user data are not stored in Git.
-See [docs/BUILD.md](docs/BUILD.md) for a repeatable Windows build.
-Each release includes the exact native engine source in `AudioBookStudio-native-source.zip`.
+Bug reports are welcome in [Issues](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues). Include Windows version, GPU and reproduction steps; leave out private manuscripts and personal recordings.
 
-Everyone is welcome to try the build, fork the repository and customize it to suit their own workflow.
-You are welcome to share your improvements, too. Please keep the MIT license notice and respect the
-separate licenses of the models and third-party components when redistributing your version.
+## Customize and contribute
+
+Everyone is welcome to try the build, fork it and customize it for their own workflow. Contributions and improvements are welcome. Keep the MIT license notice and respect the separate licenses of models and third-party components.
+
+The repository contains the app, installer, tests and public synthetic voice assets. Models, downloaded dependencies, private development records and user data are excluded. Build instructions are in [docs/BUILD.md](docs/BUILD.md). Releases include the reviewed application source and exact native engine source.
 
 ## License and credits
 
-The app's own code is [MIT-licensed](LICENSE). Models and third-party components keep their own licenses:
-Qwen3-TTS and Gemma 4 (Apache-2.0), the native engine (MIT), NVIDIA CUDA terms and FFmpeg (GPL).
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/` before redistributing anything.
+The application's own code is [MIT-licensed](LICENSE). Third-party components retain their licenses: Qwen3-TTS and Gemma 4 (Apache-2.0), the native engine (MIT), NVIDIA CUDA terms and FFmpeg (GPL). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/`.
 
-Use only texts and reference voices you have the right to use. The app does not grant rights to source material.
+Use only texts and voice references you have the right to use. The application does not grant rights to source material.
 
-<sub>This build was developed and tested with assistance from Opus 5.5 and GPT 6.1-Sol. Errors may remain;
-AI-assisted development and automated tests do not replace independent testing.</sub>
+<sub>Developed and tested with assistance from Opus 5.5 and GPT 6.1-Sol. Errors may remain; AI-assisted development and automated checks do not replace independent testing.</sub>

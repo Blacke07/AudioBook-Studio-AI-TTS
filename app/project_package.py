@@ -107,6 +107,10 @@ def cast_rows(data):
                      entry.get('model',glossary.SAME_AS_NARRATOR), entry.get('custom_voice',''),
                      entry.get('voice_design',''), entry.get('seed',0)])
     result = glossary.normalize(rows)
+    from voice_rules import global_rules
+    global_rules(data)
+    from character_registry import organization
+    organization(data)
     return result
 
 
@@ -119,9 +123,13 @@ def clean_script(data):
                 or type(row[2]) is not bool or (len(row)==4 and (type(row[3]) is not int or row[3]<0))):
             raise ValueError('Invalid speaker assignment row.')
         glossary.speaker_name(row[0], allow_reserved=True)
+    from voice_rules import validate_script
+    validate_script(data)
+    from spoken_text import validate
+    validate(data)
     # Keep row text byte-for-byte at the string level; only known metadata is accepted.
     return {key:value for key,value in data.items() if key in
-            ('source_hash','rows','report','speakers','added','ai','analyzed')}
+            ('source_hash','rows','report','speakers','added','ai','analyzed','voice_rules','spoken_text')}
 
 
 def check_voice(entry, content):
@@ -280,9 +288,11 @@ def collect(parts, snapshot=False):
         files['settings.json'] = encoded(clean_settings(project.load_settings()))
     if 'cast' in parts:
         files['characters.json'] = encoded(glossary.to_data(glossary.load()))
-        registry = fixed_voices.load()
+        # A merged identity may retain its old WAV on disk; export only active roles.
+        active = {row[0] for row in glossary.load()} | {'Narrator'}
+        registry = {role:entry for role,entry in fixed_voices.load().items() if role in active}
         files['voices/registry.json'] = encoded(registry)
-        samples = fixed_voices.samples()
+        samples = {role:entry for role,entry in fixed_voices.samples().items() if role in active}
         if not snapshot:
             samples = {role:{key:value for key,value in entry.items() if key in ('sample','serious')}
                        for role,entry in samples.items()}

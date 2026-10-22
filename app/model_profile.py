@@ -6,7 +6,7 @@ voices sounds the same in both. Only auditions of new voices and the dialogue mo
 import json
 import re
 
-from project import ROOT
+from project import LAYOUT
 
 KEYS = ("voice_design", "custom_voice", "base", "codec", "gemma", "render_factor")
 STANDARD = {
@@ -23,9 +23,9 @@ SAFE_FILE = re.compile(r"^[A-Za-z0-9._-]+\.gguf$")
 SAFE_TAG = re.compile(r"^[a-z0-9._-]+:[A-Za-z0-9._-]+$")
 
 
-def load(root=ROOT):
+def load(root=None):
     """The installed profile, checked so a damaged manifest cannot point the engine at another file."""
-    manifest = root / "installation-manifest.json"
+    manifest = (LAYOUT.state if root is None else root) / "installation-manifest.json"
     if not manifest.is_file():
         return dict(STANDARD)
     profile = json.loads(manifest.read_text(encoding="utf-8")).get("model_profile")

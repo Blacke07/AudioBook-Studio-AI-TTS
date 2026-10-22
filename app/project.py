@@ -1,12 +1,12 @@
 """The book as volumes of chapter files: settings, per-chapter scripts and states on disk.
 
-Layout (all inside the app folder; the author's chapter files are only read):
+Paths below are relative to Data/User (development checkout: app); source chapters are only read:
   settings.json                      narrator voice, pauses, export and automation settings
   volumes.json                      the registered volumes: name and source folder
   work/<volume>/<chapter>/        script.json (speakers per line), chapter.wav, audio.json
   work/passages/<key>.wav          every generated passage, named by what it contains (voice + text),
                                    so an interrupted chapter resumes and unchanged lines are never redone
-  export/<volume>/                 the finished files in the chosen format
+  ../../Audiobooks/<volume>/       the finished files in the chosen format
 """
 import hashlib
 import json
@@ -14,14 +14,17 @@ import ntpath
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+from layout import Layout, check_path_length
+LAYOUT = Layout.for_program(Path(__file__).resolve().parent)
+PROGRAM = LAYOUT.program
+ROOT = LAYOUT.user
 from text_input import read_text_file, split_passages  # noqa: E402,F401
 SETTINGS_FILE = ROOT / "settings.json"
 VOLUMES_FILE = ROOT / "volumes.json"
 WORK = ROOT / "work"
 PASSAGES = WORK / "passages"
 PROBES = WORK / "previews"
-EXPORT = ROOT / "export"
+EXPORT = LAYOUT.audiobooks
 CHAPTER_RE = re.compile(r"^\s*(\d+)\s*[-–—.]?\s*(.*)$")
 
 DEFAULT_SETTINGS = {
@@ -50,6 +53,36 @@ def _read_json(path, default):
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def backups_folder():
+    return LAYOUT.backups/'Projects' if LAYOUT.installed else ROOT/'projects-backup'
+
+
+def media_roots():
+    import fixed_voices, presets
+    return {'work': WORK, 'export': EXPORT, 'voices': fixed_voices.FOLDER, 'presets': presets.FOLDER}
+
+
+def media_token(path):
+    path = Path(path).resolve()
+    for label, folder in media_roots().items():
+        if path.is_relative_to(folder.resolve()):
+            return label + '/' + path.relative_to(folder.resolve()).as_posix()
+    raise ValueError('File is outside the application media folders.')
+
+
+def media_path(token):
+    path = Path(token)
+    if path.is_absolute() or ':' in token or '\\' in token or '..' in path.parts or len(path.parts) < 2:
+        raise ValueError('Invalid media path.')
+    folder = media_roots().get(path.parts[0])
+    if folder is None:
+        raise ValueError('File is outside the application media folders.')
+    result = folder.joinpath(*path.parts[1:]).resolve()
+    if not result.is_relative_to(folder.resolve()):
+        raise ValueError('Invalid media path.')
+    return result
 
 
 def write_json(path, data):
@@ -111,8 +144,21 @@ def add_volume(name, source):
     if not chapter_files(source):
         raise ValueError("The folder contains no TXT or DOCX chapters.")
     name = safe_name(name or source.name)
-    items = [volume for volume in volumes() if volume["name"] != name]
+    if any(volume["name"].casefold() == name.casefold() for volume in volumes()):
+        raise ValueError("This volume already exists. Use Edit volume to change its folder.")
+    items = volumes()
     items.append({"name": name, "source": str(source)})
+    write_json(VOLUMES_FILE, items)
+    return name
+
+
+def update_volume(name, source):
+    """Relink the active source; the stable name preserves cached work and exports."""
+    get_volume(name)
+    source = str(source).strip().strip('"')
+    if not is_local_source(source) or not Path(source).is_dir() or not chapter_files(source):
+        raise ValueError('Choose an existing local folder containing TXT or DOCX chapters.')
+    items = [{**volume, 'source':str(Path(source))} if volume['name']==name else volume for volume in volumes()]
     write_json(VOLUMES_FILE, items)
     return name
 
@@ -154,6 +200,9 @@ class Chapter:
         self.stem = self.path.stem
         self.number, self.title = title_of(self.stem)
         self.work = WORK / safe_name(volume) / safe_name(self.stem)
+        check_path_length(self.path)
+        check_path_length(self.work/'script.json.project-tmp')
+        check_path_length(EXPORT/safe_name(volume)/'video'/f'{safe_name(self.stem)}.mp4')
 
     @property
     def script_file(self):

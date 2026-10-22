@@ -170,7 +170,7 @@ def create_chapter(chapter, settings, should_stop, progress, log):
     # Finished output replaces an outdated video only after successful rendering and a fresh input check.
     with temporary_frames(target.parent/'.video-temp') as folder:
         result = render_clip(renderer, audio, folder/'complete.mp4',
-                             temp_root=project.WORK/'video-temp', should_stop=should_stop, progress=progress)
+                             temp_root=target.parent/'.video-temp', should_stop=should_stop, progress=progress)
         probe_video(result['file'], expected_seconds=timeline.duration)
         if should_stop():
             raise VideoCancelled('Video stopped; completed chapters are kept.')

@@ -1,4 +1,5 @@
 """Fail closed when release preparation accidentally introduces personal data or unapproved media."""
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -10,9 +11,36 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import audit_public
+import package_repository
 
 
 class PublicSourceFilesTests(unittest.TestCase):
+    def test_packaging_keeps_only_installer_and_checksum_in_dist(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            dist = root / 'dist'
+            dist.mkdir()
+            setup = dist / package_repository.SETUP_NAME
+            setup.write_bytes(b'synthetic installer')
+            build = root / 'build'
+            build.mkdir()
+            native = build / 'native-source.zip'
+            native.write_bytes(b'exact native source')
+            source = root / 'README.md'
+            source.write_text('public source', encoding='utf-8')
+            with patch.object(package_repository, 'ROOT', root), \
+                 patch.object(package_repository, 'audit') as audit, \
+                 patch.object(package_repository, 'source_files', return_value=[source]):
+                package_repository.main()
+            audit.assert_called_once_with(root)
+            self.assertEqual({file.name for file in dist.iterdir()}, {setup.name, 'SHA256SUMS.txt'})
+            self.assertEqual((dist / 'SHA256SUMS.txt').read_text(),
+                             hashlib.sha256(setup.read_bytes()).hexdigest() + '  ' + setup.name + '\n')
+            with package_repository.zipfile.ZipFile(build / 'AudioBookStudio-source.zip') as archive:
+                self.assertEqual(archive.namelist(), ['README.md'])
+                self.assertEqual(archive.read('README.md'), b'public source')
+            self.assertEqual(native.read_bytes(), b'exact native source')
+
     def test_internal_maintainer_documents_are_not_packaged(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

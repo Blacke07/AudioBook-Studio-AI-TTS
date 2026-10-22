@@ -20,6 +20,42 @@ Windows .NET Framework C# compiler at its standard Framework64 path. The desktop
 Framework 4.6.2 or later and uses the pinned Microsoft WebView2 SDK package described below.
 Do not run the production app from the release source directory: keep its audited initial data intact.
 
+## Installed layout and migration
+
+`app/layout.py` is shared by the application, Python setup/verification and build tools. Installed code
+lives in `Data/Program`; mutable state is in `Data/User`; logs, setup journals and the desktop profile
+are in `Data/State`. Finished files are in `Audiobooks`, project snapshots in `Backups/Projects`, models
+remain in `models`. The C# host/setup share `InstallationPaths.cs`; tests cover the same physical paths.
+Only the launcher and uninstaller stay at the root. The setup EXE and unknown user files are preserved.
+Tests remain in the source archive and are no longer installed in the runtime payload.
+
+The audited initial state still lives under source `app/`. Build maps its six configuration/reference
+records to `Data/User` in the payload without changing their bytes. A fresh setup seeds them once;
+an update validates and preserves existing data. `--initial-state` is used only for a fresh seed.
+The WebView2 assemblies and native loader are in Program. `DesktopEntry.cs` registers assembly/native
+lookup before loading AppLauncher; there is no second copy of those DLLs in the installation root.
+
+`installer/migration.py` validates the old manifest and references, inventories hashes, saves small
+configuration preimages, then journals same-drive renames. Internal text sources are remapped; external
+manuscripts are never read by migration. Resume checks completed destinations and outstanding sources;
+rollback refuses independently changed files. Old unchanged owned program files are removed only after
+new-install verification; unknown/modified files remain. Models stay in place. A legacy Local Models
+library is compared by hash: missing pinned files are renamed into models, identical pinned duplicates
+are removed only after commit, unknown files are kept.
+
+`publication.py` stages and hashes program replacements, saves preimages and records a write-ahead
+journal. An interrupted publication is resumable; rollback refuses unrelated changes. Normal completion
+removes its staging files. Models and existing user state are outside that replacement transaction.
+`restore_data.py` supports a read-only preview of an old verified data snapshot; applying requires the
+reviewed plan hash and an idle app. It restores data/audio, not code/models/calibration, verifies bytes,
+supports resuming, and retains preimages under Backups/Restores. Never exercise it on the owner's backup
+without their separate restoration step. All checked-in tests use disposable synthetic snapshots.
+
+Windows paths are checked before output/migration. Paths at 240 characters are refused conservatively
+because the .NET host and external tools are not universally extended-path aware; no machine policy is
+changed. Tests include paths beyond 260 and assert an explicit error without creating output, rather
+than claiming that every component supports long paths. Keep installation and chapter names reasonably short.
+
 ## Desktop window
 
 `installer/AppLauncher.cs` owns startup, the installation-specific mutex/activation message, tray icon,
@@ -42,7 +78,7 @@ by its Windows signature rather than an evergreen content hash. The consent inst
 component, which is deliberately preserved by the application's uninstaller. A missing runtime is a
 clear startup error, with no silent switch to another browser.
 
-The dedicated profile/placement folder `.desktop` is installation-local and excluded from source and
+The dedicated profile/placement folder `Data/State/desktop` is installation-local and excluded from source and
 payload. Uninstaller traversal removes a junction itself, without following it into a different profile.
 The UI requests no remote-debugging port or sandbox-disabling options. Native modal Save UI is scheduled
 after the WebView2 event callback, using a deferral; no nested modal loop is entered inside that callback.
@@ -89,8 +125,8 @@ to the public source tree. Public README screenshots must use invented text and 
 The GUI and CLI share one renderer. Video defaults are supplied in memory for legacy settings files;
 initial release settings and reference voices are unchanged. `video_jobs.py` owns chapter cache records,
 MP4 publication, measured timing, YouTube lists and scratch ownership. `video.py` owns drawing/encoding.
-Neither starts a voice engine. Frames belong in `work/video-temp`, never beside the final export.
-Intermediate MP4s use owned `export/<volume>/video/.video-temp` folders; startup cleanup covers both
+Neither starts a voice engine. Frames use owned temporary folders on the audiobook destination drive, never mixed with finished files.
+Intermediate MP4s and PNGs use owned `Audiobooks/<volume>/video/.video-temp` folders; startup cleanup covers these and legacy
 locations. Streams and container duration must match chapter audio within 80 ms before publication.
 The automation switch is excluded from render options, cache keys and measured timing comparisons.
 
@@ -140,12 +176,10 @@ python tools/export_native_source.py --source C:\AudioBookStudioBuild\source\eng
 
 ## Demo and release build
 
-`Local Models` under the installation root is a staging directory: selected, hash-verified model files
-are renamed individually into `models`, on the same disk. Extra files and the instruction file remain.
-The installer does not rename the entire directory or silently adopt unselected files. A retry accepts
-already verified destinations and continues with remaining files. Linked staging/destination paths are
-refused for moves. An external library passed explicitly with `--manual-models` is copied instead, so
-the installer does not consume a shared library. Tests use invented small files; no model downloads.
+`models` under the installation root is the final model directory. Files supplied there are checked
+in place and never transferred to a second folder. Model downloads use the same final directory with
+verified `.part` files. An external library passed explicitly with `--manual-models` is copied without
+consuming that library. Tests use invented small files; no model downloads.
 
 The checked-in narrator WAV and calibration are newly generated synthetic public assets. Do not replace
 them with personal reference recordings. `demo-provenance.json` and `release-state.json` lock their hashes.
@@ -160,7 +194,8 @@ python tools/package_repository.py
 
 The build creates the launcher, the uninstaller and icon, bundles the app/native runtime, embeds that payload in the setup
 EXE, and checks embedded resources. Model weights and downloaded vendor packages are not embedded.
-`dist/` receives the setup, public source, exact native source and `SHA256SUMS.txt`.
+`dist/` contains only the setup and its `SHA256SUMS.txt`. The audited public source archive is
+written to `build/AudioBookStudio-source.zip`; the exact native source remains at `build/native-source.zip`.
 Product documentation and license notices are included inside the archives and application payload.
 `--reuse-payload` is accepted only when all payload inputs still match their recorded hashes.
 
@@ -177,9 +212,10 @@ not offered with mismatched checksums/source. Do not upload stale files from pre
 Publish only these four release assets:
 
 - `AudioBookStudio-Setup.exe`.
-- `AudioBookStudio-source.zip`, matching the release tag's reviewed source tree.
-- `AudioBookStudio-native-source.zip`, containing the exact native engine source and its licenses.
-- `SHA256SUMS.txt`, listing the SHA-256 of those three files with their published names.
+- `AudioBookStudio-source.zip`, from `build/`, matching the release tag's reviewed source tree.
+- `AudioBookStudio-native-source.zip`, uploaded from `build/native-source.zip`, containing the exact
+  native engine source and its licenses.
+- `SHA256SUMS.txt`, from `dist/`, listing the installer's SHA-256 with its published name.
 
 Keep documentation and license notices in the repository and archives; do not upload extra copies
 as release attachments. GitHub also adds its own source archive links automatically.

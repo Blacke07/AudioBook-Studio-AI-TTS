@@ -8,7 +8,9 @@ import time
 from urllib.error import URLError
 from urllib.request import urlopen
 
-ROOT = Path(__file__).resolve().parent
+from layout import Layout
+LAYOUT = Layout.for_program(Path(__file__).resolve().parent)
+ROOT = LAYOUT.root
 
 
 def ollama_ready():
@@ -27,9 +29,9 @@ def require_model(tags, expected_tag, expected_digest):
 
 
 def main():
-    manifest = json.loads((ROOT / 'installation-manifest.json').read_text(encoding='utf-8'))
+    manifest = json.loads(LAYOUT.manifest.read_text(encoding='utf-8'))
     env = os.environ.copy()
-    env['PATH'] = str(ROOT / 'tools/ffmpeg') + os.pathsep + env['PATH']
+    env['PATH'] = str(LAYOUT.program / 'tools/ffmpeg') + os.pathsep + env['PATH']
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
     owned = None
@@ -38,7 +40,7 @@ def main():
             env['OLLAMA_HOST'] = '127.0.0.1:11434'
             env['OLLAMA_MODELS'] = str(ROOT / 'models/ollama')
             env['OLLAMA_NO_CLOUD'] = 'true'
-            owned = subprocess.Popen([str(ROOT / 'tools/ollama/ollama.exe'), 'serve'], env=env,
+            owned = subprocess.Popen([str(LAYOUT.program / 'tools/ollama/ollama.exe'), 'serve'], env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
             deadline = time.monotonic() + 45
@@ -47,7 +49,7 @@ def main():
                     raise RuntimeError('Ollama did not start. Check the installation and port 11434.')
                 time.sleep(.5)
         require_model(ollama_ready(), manifest['gemma'].get('tag', 'gemma4:12b'), manifest['gemma']['sha256'])
-        return subprocess.call([sys.executable, str(ROOT / 'app.py'), *sys.argv[1:]], cwd=ROOT, env=env)
+        return subprocess.call([sys.executable, '-B', str(LAYOUT.program / 'app.py'), *sys.argv[1:]], cwd=LAYOUT.program, env=env)
     finally:
         if owned is not None and owned.poll() is None:
             owned.terminate()

@@ -188,7 +188,7 @@ class BigCheck : Painted {
 }
 
 class Setup : Form {
-    const string ModelsFolder="Local Models", Guide="_place models here",
+    const string ModelsFolder="models", Guide="_place models here",
                  GuideHeader="AudioBook Studio - place your model files in this folder";
     static readonly string[] ProfileKeys={"voice_design","custom_voice","base","codec"};
     static Dictionary<string,object> manifestCache;
@@ -220,7 +220,7 @@ class Setup : Form {
     [STAThread]
     static int Main(string[] args) {
         if(args.Length>0 && args[0]=="--check-resources") {
-            foreach(string name in new string[]{"bootstrap.ps1","install.py","manifest.json","payload.zip","README.md","app.ico"}) {
+            foreach(string name in new string[]{"bootstrap.ps1","install.py","layout.py","migration.py","publication.py","state.py","manifest.json","payload.zip","README.md","app.ico"}) {
                 using(Stream source=Assembly.GetExecutingAssembly().GetManifestResourceStream(name)) {
                     if(source==null || source.Length==0) return 1;
                 }
@@ -242,6 +242,7 @@ class Setup : Form {
 
     public Setup(string folder) {
         root=folder;
+        InstallationPaths.CheckLength(InstallationPaths.At(root,"Data/Program/runtime/python/python.exe"));
         Text="AudioBook Studio setup"; BackColor=Theme.Bg; ForeColor=Theme.Ink; Font=Theme.Sans(10);
         AutoScaleMode=AutoScaleMode.None; ClientSize=new Size(Width96,Height96);
         FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
@@ -289,7 +290,7 @@ class Setup : Form {
         welcome.Controls.Add(standardCard); welcome.Controls.Add(compactCard);
         AddText(welcome,"Model files",Theme.Sans(9.5f),Theme.Muted,Edge,356,500,24);
         download.Detail="Setup downloads every model and checks each file.";
-        local.Detail="Copy files you already have into a Local Models folder.";
+        local.Detail="Copy files you already have into a models folder.";
         download.Bounds=new Rectangle(Edge,382,346,86); local.Bounds=new Rectangle(Edge+362,382,346,86);
         download.Chosen+=delegate { Choose(false); }; local.Chosen+=delegate { Choose(true); };
         welcome.Controls.Add(download); welcome.Controls.Add(local);
@@ -367,7 +368,7 @@ class Setup : Form {
         if(name=="standard" && !standardCard.Enabled) return;
         profile=name; standardCard.Selected=name=="standard"; compactCard.Selected=name=="compact";
         // When the user switches, an instruction list setup wrote earlier is rewritten for this model set;
-        // anything else in Local Models is left alone.
+        // anything else in models is left alone.
         if(byUser && Directory.Exists(Path.Combine(root,ModelsFolder))) {
             try { PrepareModelsFolder(root,profile); } catch(Exception) { }
         }
@@ -375,7 +376,7 @@ class Setup : Form {
         Choose(local.Selected);
     }
 
-    // The model set whose audition model is already in Local Models, so a second run keeps the user's choice.
+    // The model set whose audition model is already in models, so a second run keeps the user's choice.
     static string SuppliedProfile(string folder) {
         foreach(string name in ((Dictionary<string,object>)Manifest()["profiles"]).Keys)
             if(File.Exists(Path.Combine(folder,ModelsFolder,(string)Profile(name)["voice_design"]))) return name;
@@ -391,37 +392,43 @@ class Setup : Form {
     }
 
     void Choose(bool useLocal) {
-        if(supplied) useLocal=true;
-        download.Selected=!useLocal; local.Selected=useLocal; download.Enabled=!supplied;
-        if(supplied) {
-            note.Text="Model files were found in Local Models. Verified files are moved into models, without an extra copy. "+
-                      "To download instead, remove them from that folder.";
+        download.Selected=!useLocal; local.Selected=useLocal;
+        if(supplied && useLocal) {
+            note.Text="Model files were found in models. Setup verifies and uses them in place; no copying or moving. "+
+                      "Choose automatic downloads to fetch missing files instead.";
             install.Text="Install";
         } else if(!useLocal) {
-            note.Text="About "+Gigabytes(profile)+" is downloaded from Hugging Face and the Ollama registry, then checked.";
+            note.Text=supplied ? "Verified models already in this folder are reused. Missing files are downloaded and checked." :
+                      "About "+Gigabytes(profile)+" is downloaded from Hugging Face and the Ollama registry, then checked.";
             install.Text="Install";
         } else if(!preparedFolder && !Directory.Exists(Path.Combine(root,ModelsFolder))) {
-            note.Text="Setup creates a Local Models folder with a \""+Guide+"\" list of the exact files to copy. "+
+            note.Text="Setup creates a models folder with a \""+Guide+"\" list of the exact files to copy. "+
                       "Nothing else is installed yet.";
-            install.Text="Create Local Models folder";
+            install.Text="Create models folder";
         } else {
-            note.Text="Copy the files listed in \""+Guide+"\" into Local Models, then choose Check again.";
+            note.Text="Copy the files listed in \""+Guide+"\" into models, then choose Check again.";
             install.Text="Check again";
         }
     }
 
     async void OnInstall() {
         if(!supplied && local.Selected) {
-            if(install.Text=="Create Local Models folder") {
+            if(install.Text=="Create models folder") {
                 try { Process.Start("explorer.exe",Quote(PrepareModelsFolder(root,profile))); preparedFolder=true; }
-                catch(Exception failure) { MessageBox.Show(this,failure.Message,"Local Models",MessageBoxButtons.OK,MessageBoxIcon.Error); return; }
+                catch(Exception failure) { MessageBox.Show(this,failure.Message,"models",MessageBoxButtons.OK,MessageBoxIcon.Error); return; }
                 Choose(true); return;
             }
             supplied=HasSuppliedModels(root);
-            if(!supplied) { note.Text="No model files found in Local Models yet. Copy the listed files, then choose Check again."; return; }
+            if(!supplied) { note.Text="No model files found in models yet. Copy the listed files, then choose Check again."; return; }
             Choose(true); return;
         }
         if(runtimePreparing) return;
+        if(File.Exists(InstallationPaths.At(root,InstallationPaths.Manifest)) || File.Exists(Path.Combine(root,"installation-manifest.json"))) {
+            string message="Update AudioBook Studio in this folder?\n\n"+root+
+                "\n\nExisting settings, voices, work, audiobooks, backups and models are kept. Legacy data is moved into the new layout and verified. Nothing is published online.";
+            if(MessageBox.Show(this,message,"Update AudioBook Studio",MessageBoxButtons.YesNo,MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return;
+        }
         runtimePreparing=true; install.Enabled=false;
         try { if(!await DesktopRuntime.EnsureForSetup(this)) return; }
         catch(Exception error) { MessageBox.Show(this,error.Message,"Microsoft WebView2 Runtime",MessageBoxButtons.OK,MessageBoxIcon.Error); return; }
@@ -474,7 +481,7 @@ class Setup : Form {
             if(session==null) {
                 session=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AudioBookStudio-Installer","sessions",Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(session);
-                foreach(string name in new string[]{"bootstrap.ps1","install.py","manifest.json","payload.zip"}) {
+                foreach(string name in new string[]{"bootstrap.ps1","install.py","layout.py","migration.py","publication.py","state.py","manifest.json","payload.zip"}) {
                     using(Stream source=Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
                     using(var output=File.Create(Path.Combine(session,name))) source.CopyTo(output);
                 }
@@ -482,6 +489,7 @@ class Setup : Form {
             string arguments="-NoProfile -ExecutionPolicy Bypass -File "+Quote(Path.Combine(session,"bootstrap.ps1"))+
                 " -Target "+Quote(root)+" -InstallerPath "+Quote(Assembly.GetExecutingAssembly().Location)+
                 " -Profile "+profile+" -AcceptLicenses";
+            arguments+=local.Selected ? " -Manual -ModelsSource "+Quote(Path.Combine(root,ModelsFolder)) : " -Download";
             var info=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),arguments) {
                 UseShellExecute=false, CreateNoWindow=true, RedirectStandardOutput=true, RedirectStandardError=true,
                 StandardOutputEncoding=Encoding.UTF8, StandardErrorEncoding=Encoding.UTF8
@@ -521,7 +529,7 @@ class Setup : Form {
             if(name.StartsWith("qwen-")) Advance(3);
             Activity("Downloading "+Friendly(name),-1,"Starting…");
         } else if(text.StartsWith("Checking local model: ")) {
-            Advance(3); currentFile=null; Activity("Checking "+Friendly(text.Substring(22)),-1,"Verified Local Models files are moved without an extra copy");
+            Advance(3); currentFile=null; Activity("Checking "+Friendly(text.Substring(22)),-1,"Models are verified and used in place");
         } else if(text.StartsWith("Checking SHA-256: ")) {
             string name=text.Substring(18); currentFile=null;
             if(name.StartsWith("qwen-")) Advance(3);
@@ -575,7 +583,7 @@ class Setup : Form {
         progressTitle.Text="Setup could not finish";
         progressSubtitle.Text="Completed steps are kept and reused when you retry.";
         activity.Visible=bar.Visible=amount.Visible=false;
-        error.Text=(lastError ?? "Setup stopped unexpectedly.")+"\nSolve this, then choose Retry. Details are also in install.log in the installation folder.";
+        error.Text=(lastError ?? "Setup stopped unexpectedly.")+"\nSolve this, then choose Retry. Your data is kept. Details: Data/State/logs/install.log.";
         error.Visible=true; openFolder.Visible=retry.Visible=closeProgress.Visible=true;
         if(!log.Visible) { log.Visible=true; details.Text="Hide details"; }
         log.SelectionStart=log.TextLength; log.ScrollToCaret();
@@ -615,7 +623,8 @@ class Setup : Form {
             WriteLink(link,target,folder);
             created.Add(link);
         }
-        if(created.Count>0) File.AppendAllLines(Path.Combine(folder,"shortcuts.txt"),created,new UTF8Encoding(false));
+        if(created.Count>0) { Directory.CreateDirectory(InstallationPaths.At(folder,InstallationPaths.State));
+            File.AppendAllLines(InstallationPaths.At(folder,InstallationPaths.State+"/shortcuts.txt"),created,new UTF8Encoding(false)); }
     }
 
     static void WriteLink(string link,string target,string folder) {
@@ -679,10 +688,11 @@ class Setup : Form {
     static bool HasSuppliedModels(string folder) {
         string models=Path.Combine(folder,ModelsFolder);
         return Directory.Exists(models) && Directory.EnumerateFiles(models,"*",SearchOption.AllDirectories)
-            .Any(file => !Path.GetFileName(file).Equals(Guide,StringComparison.OrdinalIgnoreCase));
+            .Any(file => !Path.GetFileName(file).Equals(Guide,StringComparison.OrdinalIgnoreCase)
+                         && !file.EndsWith(".part",StringComparison.OrdinalIgnoreCase));
     }
 
-    // Creates Local Models (and ollama\blobs) with the exact list of files to copy for one model set. User files are
+    // Creates models (and ollama\blobs) with the exact list of files to copy for one model set. User files are
     // never overwritten; only an instruction list that setup itself wrote is updated for another model set.
     static string PrepareModelsFolder(string folder,string name) {
         string models=Path.Combine(Path.GetFullPath(folder),ModelsFolder);
@@ -705,8 +715,8 @@ class Setup : Form {
         text.Append(GuideHeader+"\r\n\r\n"+
                     "Model set: "+profile["label"]+". Choose the same model set in setup.\r\n\r\n"+
                     "Run AudioBookStudio-Setup.exe again after copying them. Setup checks the size and SHA-256 of every\r\n"+
-                    "file, then moves verified files into models without creating another copy.\r\n"+
-                    "Local Models is a staging folder; keep any reusable backup outside the installation.\r\n"+
+                    "file, then uses it directly from this folder. Nothing is copied or moved.\r\n"+
+                    "models is the final application folder for these files. Keep reusable backups elsewhere.\r\n"+
                     "All files below are needed. If one is missing or different, setup stops and explains which one.\r\n"+
                     "To let setup download everything instead, leave only this file here (or delete the folder).\r\n\r\n"+
                     "1. Qwen TTS models - put these "+files.Length+" files directly in this folder, with exactly these names:\r\n\r\n");
@@ -777,10 +787,10 @@ class Setup : Form {
             form.ChooseProfile("standard");
             form.ShowPage(form.progress);
             form.Advance(3); form.currentFile="qwen-talker-1.7b-voicedesign-F32.gguf";
-            form.Activity("Checking Voice Design model",-1,"Verified Local Models files are moved without an extra copy");
+            form.Activity("Checking Voice Design model",-1,"Models are verified and used in place");
             form.amount.Visible=false;
             Save(form.progress,output,"4-progress.png");
-            form.log.AppendText("Using models in the Local Models subfolder. All files will be verified.\r\nChecking local model: qwen-talker-1.7b-voicedesign-F32.gguf\r\n");
+            form.log.AppendText("Using models in the models subfolder. All files will be verified.\r\nChecking local model: qwen-talker-1.7b-voicedesign-F32.gguf\r\n");
             form.lastError="A different file already exists at the destination: models\\qwen-talker-1.7b-voicedesign-F32.gguf";
             form.Finished(1); Save(form.progress,output,"5-error.png");
             form.ShowPage(form.finish); Save(form.finish,output,"6-finish.png");

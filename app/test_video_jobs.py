@@ -299,6 +299,35 @@ class VideoJobTests(unittest.TestCase):
         self.assertEqual(request('POST', '/api/video/youtube', {'volume': 'The Lantern House'},
                                  'https://foreign.example')[0], 403)
 
+    def test_codec_api_protection_and_settings_roundtrip(self):
+        with patch.object(video, 'codec_capabilities', return_value={'h265': {'available': True}}) as probe:
+            self.assertEqual(request('GET', '/api/video/codecs', {})[1]['codecs']['h265']['available'], True)
+            self.assertEqual(request('GET', '/api/video/codecs', {}, 'https://foreign.example')[0], 403)
+            self.assertEqual(probe.call_count, 1)
+        for codec in ('h264', 'h265', 'av1'):
+            code, data = request('PUT', '/api/settings', {'settings': {**self.settings, 'video': {'codec': codec}}})
+            self.assertEqual(code, 200)
+            self.assertEqual(data['settings']['video']['codec'], codec)
+        self.assertEqual(request('PUT', '/api/settings', {'settings': {**self.settings, 'video': {'codec': 'vp9'}}})[0], 400)
+
+    def test_h264_existing_video_and_timing_remain_current_but_other_codecs_differ(self):
+        chapter = self.chapters[0]
+        old_options = {key: value for key, value in asdict(video.VideoSettings()).items()
+                       if key not in ('enabled', 'codec')}
+        with patch.object(video.VideoSettings, 'render_options', return_value=old_options):
+            old_key = jobs.fingerprint(chapter, self.settings)
+        self.record(chapter)
+        record = project._read_json(chapter.work/'video.json', {})
+        record['key'] = old_key
+        project.write_json(chapter.work/'video.json', record)
+        project.write_json(project.WORK/'video-timing.json', {'settings': old_options, 'factor': .2})
+        self.assertEqual(jobs.video_status(chapter, self.settings, True)['state'], 'ready')
+        self.assertEqual(jobs.measurement(self.settings), .2)
+        for codec in ('h265', 'av1'):
+            changed = {**self.settings, 'video': {'codec': codec}}
+            self.assertEqual(jobs.video_status(chapter, changed, True)['state'], 'outdated')
+            self.assertIsNone(jobs.measurement(changed))
+
     def test_api_queues_video_in_same_worker(self):
         import app as studio
         with patch.object(studio, 'worker', self.worker):

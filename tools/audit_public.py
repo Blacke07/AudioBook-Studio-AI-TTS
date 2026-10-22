@@ -36,7 +36,7 @@ def public_file(relative):
     if path.suffix.casefold() in ('.md', '.markdown'):
         return name in PUBLIC_MARKDOWN
     if parts and parts[0] == 'docs':
-        return len(parts) == 3 and parts[1] == 'screenshots' and path.suffix.casefold() == '.png'
+        return len(parts) == 3 and parts[1] == 'screenshots' and path.suffix.casefold() in ('.png', '.jpg')
     return path.suffix.casefold() not in ('.pyc', '.log', '.docx', '.pdf')
 
 
