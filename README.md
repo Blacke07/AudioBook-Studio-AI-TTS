@@ -392,7 +392,7 @@ Running `app.py` directly for development still opens the normal browser.
 > long generation from the desktop window remain unverified. Browser-crash recovery and busy/queued exit
 > handling were tested with a fake backend, without running models.
 
-The current build passed **212 Python tests and 8 Node tests**, including tests run from the packaged source.
+The current build passed **212 Python tests and 12 Node tests**, including tests run from the packaged source.
 This is an early release with the testing limits above. [VERIFICATION.md](VERIFICATION.md) describes the checks performed
 and their limits. Please review speaker assignments and listen to a sample chapter before running a whole book.
 If you find a problem, reports with your GPU, Windows version and steps to reproduce are welcome in

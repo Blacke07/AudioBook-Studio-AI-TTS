@@ -12,7 +12,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s app -q
 .\.venv\Scripts\python.exe -m unittest discover -s tests -q
 node --check app/web/app.js
-node --test tests/test_voice_guide.mjs tests/test_project_ui.mjs
+node --test tests/test_voice_guide.mjs tests/test_project_ui.mjs tests/test_volume_ui.mjs
 ```
 
 Node is only needed for UI source tests, not by the installed application. Native resource tests use the

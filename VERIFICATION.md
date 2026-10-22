@@ -26,13 +26,23 @@ To run the source tests and reproduce a Windows build, see [docs/BUILD.md](docs/
 
 ## Installation-local model staging
 
-The current packaged source passes 212 Python tests (138 application + 74 distribution) and 8 Node tests.
+The current packaged source passes 212 Python tests (138 application + 74 distribution) and 12 Node tests.
 Six added installer regressions cover moving verified Qwen files and Gemma blobs from `Local Models`
 into `models`, retaining the same filesystem file identity without copying model data, retry after an
 interrupted transfer, invalid bytes/destination conflicts, junction refusal and preservation of extras.
 An explicitly external model library is copied and left unchanged. Post-move verification failures
 retain the moved file and report its location. Tests use small invented model bytes and fake runtime
 setup/verification; they do not constitute another real-model or clean-Windows installation test.
+
+## Chapter batch selection
+
+The header checkbox reflects all, partial or empty selection after the chapter table redraws.
+Clicking it again clears the visible chapters; hidden selections are preserved when filtering.
+Each checkbox has a 44-by-44 CSS-pixel label, with a 20-pixel checkbox. Clicking anywhere in its
+selection cell selects the chapter without opening it; clicking the title still opens the editor.
+Four Node regressions exercise the actual volume renderer and batch payload. Browser checks on an
+isolated invented two-chapter volume confirmed select/deselect-all, partial selection, label/cell
+clicks and normal chapter navigation. No installed application or private project data was changed.
 
 ## Optional video renderer
 

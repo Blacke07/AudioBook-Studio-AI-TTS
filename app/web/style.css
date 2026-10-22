@@ -209,8 +209,9 @@ table.chapters td { padding: 10px; border-bottom: 1px solid var(--line); vertica
 table.chapters tr.clickable:hover td { background: var(--surface-2); cursor: pointer; }
 table.chapters td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 54px; }
 table.chapters td.dur { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-table.chapters td.check, table.chapters th.check { width: 34px; }
-table.chapters input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+table.chapters td.check, table.chapters th.check { width: 44px; padding: 4px 8px; }
+table.chapters .chapter-select { display: grid; place-items: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .mini-bar { width: 70px; display: inline-block; vertical-align: middle; margin-left: 6px; }
 
 /* ---- chapter editor ---- */

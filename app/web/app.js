@@ -240,8 +240,9 @@ async function viewVolume(name) {
   const remaining = chapters.filter((c) => !["generated", "exported"].includes(c.state)).reduce((sum, c) => sum + (c.remaining_seconds ?? c.estimated_seconds ?? 0), 0) * data.render_factor;
   selected = new Set([...selected].filter((stem) => chapters.some((c) => c.stem === stem)));
   const visible = chapters.filter((c) => volumeFilter === "all" || c.state === volumeFilter);
+  const visibleSelected = visible.filter((c) => selected.has(c.stem)).length;
   const bar = Object.entries(counts).map(([state, n]) => `<i style="width:${n / chapters.length * 100}%;background:${STATE_COLOR[state]}"></i>`).join("");
-  const target = selected.size ? `for ${selected.size} selected chapters` : "for the whole volume";
+  const target = selected.size ? `for ${selected.size} selected chapter${selected.size === 1 ? "" : "s"}` : "for the whole volume";
   view.innerHTML = `
     <div class="crumbs"><a href="#/">Volumes</a> ›</div>
     <div class="page-head"><div><h1>${esc(name)}</h1><p class="small">${esc(data.volume.source)}</p></div>
@@ -278,9 +279,9 @@ async function viewVolume(name) {
     <div class="card" style="margin-top:16px">
       <div class="filters">${[["all", `All (${chapters.length})`], ...Object.keys(STATE_LABEL).filter((s) => counts[s]).map((s) => [s, `${STATE_LABEL[s]} (${counts[s]})`])]
         .map(([key, label]) => `<span class="chip ${key === "all" ? "" : STATE_CLASS[key]} ${volumeFilter === key ? "on" : ""}" data-filter="${key}">${label}</span>`).join("")}</div>
-      <table class="chapters"><thead><tr><th class="check"><input type="checkbox" id="all"></th><th>No.</th><th>Title</th><th>Duration</th><th>Status</th><th></th></tr></thead>
+      <table class="chapters"><thead><tr><th class="check"><label class="chapter-select"><input type="checkbox" id="all" aria-label="Select all visible chapters" ${visible.length ? "" : "disabled"}></label></th><th>No.</th><th>Title</th><th>Duration</th><th>Status</th><th></th></tr></thead>
       <tbody>${visible.map((c) => `<tr class="clickable" data-stem="${esc(c.stem)}">
-        <td class="check"><input type="checkbox" data-select="${esc(c.stem)}" ${selected.has(c.stem) ? "checked" : ""}></td>
+        <td class="check"><label class="chapter-select"><input type="checkbox" data-select="${esc(c.stem)}" aria-label="Select ${esc(c.title)}" ${selected.has(c.stem) ? "checked" : ""}></label></td>
         <td class="num">${c.number ?? ""}</td>
         <td>${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.error)}</div>` : ""}</td>
         <td class="dur">${c.seconds ? duration(c.seconds) : `~${duration(c.estimated_seconds)}`}</td>
@@ -317,10 +318,18 @@ async function viewVolume(name) {
   $("#open-source").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "source", volume: name } }));
   $("#open-export").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "export", volume: name } }));
   $$("[data-filter]").forEach((element) => element.onclick = () => { volumeFilter = element.dataset.filter; viewVolume(name); });
+  $("#all").checked = visible.length > 0 && visibleSelected === visible.length;
+  $("#all").indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
   $("#all").onchange = (event) => { visible.forEach((c) => event.target.checked ? selected.add(c.stem) : selected.delete(c.stem)); viewVolume(name); };
+  $$("[data-select]").forEach((box) => box.onchange = () => {
+    box.checked ? selected.add(box.dataset.select) : selected.delete(box.dataset.select); viewVolume(name);
+  });
   $$("tr.clickable").forEach((row) => row.onclick = (event) => {
-    const box = event.target.closest("[data-select]");
-    if (box) { box.checked ? selected.add(box.dataset.select) : selected.delete(box.dataset.select); viewVolume(name); return; }
+    const cell = event.target.closest("td.check");
+    if (cell) {
+      if (!event.target.closest("input, label")) $("[data-select]", cell).click();
+      return;
+    }
     const play = event.target.closest("[data-play]");
     if (play) { const player = $("#volume-player"); player.classList.remove("hidden"); player.src = play.dataset.play; player.play(); return; }
     location.hash = `#/chapter/${encodeURIComponent(name)}/${encodeURIComponent(row.dataset.stem)}`;
