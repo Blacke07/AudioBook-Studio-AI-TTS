@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import uuid
 
@@ -26,7 +27,7 @@ def target(name):
     """Only application-owned configuration, references, scripts and transaction metadata."""
     parts = name.split('/')
     allowed = (name in CONFIG or len(parts)==2 and parts[0]=='voices' and name.endswith('.wav')
-               or len(parts)==4 and parts[0]=='work' and parts[-1]=='script.json'
+               or len(parts)==4 and parts[0]=='work' and parts[-1] in ('script.json','audio.json')
                or name=='projects-state/last-import.json'
                or len(parts)==3 and parts[:2]==['projects-state','reports'] and name.endswith('.json'))
     if not allowed:
@@ -270,6 +271,10 @@ def plan(incoming, choices):
                 raise ValueError('Volume name differs only in letter case: '+name)
             new = name not in volumes
             entry = dict(volumes.get(name,item))
+            if not isinstance(entry.get('id'),str) or not re.fullmatch('[a-zA-Z0-9_-]{1,80}',entry['id']):
+                entry['id'] = project.volume_id(entry)
+            if any(other.get('id')==entry['id'] for other_name,other in volumes.items() if other_name!=name):
+                raise ValueError('Duplicate volume ID in the package: '+entry['id'])
             if name in choices.get('locations',{}):
                 source = choices['locations'][name]
                 if not isinstance(source,str) or not _local_folder(source):

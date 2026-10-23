@@ -158,9 +158,9 @@ def cast(volume=None):
             'can_undo':transfer.target(UNDO).is_file()}
 
 
-def _sound(chapter, settings, rows, rules, script=None, registry_document=None):
+def _sound(chapter, settings, rows, rules, script=None, registry_document=None, enforce_status=True):
     from conversion import chapter_plan
-    chunks, voices, keys = chapter_plan(chapter, settings, rows, routing_rules=rules, script_override=script, registry_document=registry_document)
+    chunks, voices, keys = chapter_plan(chapter, settings, rows, routing_rules=rules, script_override=script, registry_document=registry_document, enforce_status=enforce_status)
     return {'signature':digest([[key,chunk.pause_after] for key,chunk in zip(keys,chunks)]),
             'omitted':[i for i,row in enumerate((script or chapter.script())['rows'])
                        if row[0] == NARRATOR and i not in {chunk.line for chunk in chunks}]}

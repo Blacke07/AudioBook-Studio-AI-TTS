@@ -123,9 +123,15 @@ def chapter_title(chapter):
 
 
 def fingerprint(chapter, settings):
-    return cache_key(chapter.audio_file, chapter.script(), project._read_json(chapter.audio_meta, None),
+    script = chapter.script()
+    display = None
+    if script:
+        from character_registry import resolved_labels
+        display = resolved_labels(script.get('rows', []), chapter.volume, chapter.stem,
+                                  source_hash=script.get('source_hash'))
+    return cache_key(chapter.audio_file, script, project._read_json(chapter.audio_meta, None),
                      VideoSettings.from_dict(settings.get('video', {})),
-                     volume=chapter.volume, title=chapter_title(chapter))
+                     volume=chapter.volume, title=chapter_title(chapter), display=display)
 
 
 def video_status(chapter, settings, audio_current):
@@ -164,7 +170,11 @@ def create_chapter(chapter, settings, should_stop, progress, log):
     options = VideoSettings.from_dict(settings.get('video', {}))
     timeline, audio = load_chapter(chapter.work)
     key = fingerprint(chapter, settings)
-    renderer = Renderer(timeline, chapter.volume, chapter_title(chapter), options)
+    script = chapter.script() or {'rows': []}
+    from character_registry import resolved_labels
+    display = resolved_labels(script.get('rows', []), chapter.volume, chapter.stem,
+                              source_hash=script.get('source_hash'))
+    renderer = Renderer(timeline, chapter.volume, chapter_title(chapter), options, display=display)
     target = video_path(chapter)
     from video import VideoCancelled
     # Finished output replaces an outdated video only after successful rendering and a fresh input check.

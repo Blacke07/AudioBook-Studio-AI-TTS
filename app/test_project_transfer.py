@@ -75,6 +75,15 @@ class ProjectTransferTests(unittest.TestCase):
         _, report = transfer.plan(incoming,choices)
         return incoming,choices,transfer.state_hash(),report
 
+    def test_volume_ids_survive_export_and_import(self):
+        original = project.volume_id(project.get_volume('The Lantern House'))
+        incoming = package.read_package(self.path)
+        self.assertEqual(incoming.volumes[0].get('id'), original)
+        self.empty()
+        writes, _ = transfer.plan(incoming, {'parts': ['volumes']})
+        self.assertIn('volumes.json', writes)
+        self.assertEqual(package.json_data(writes['volumes.json'])[0]['id'], original)
+
     def test_preview_is_read_only_and_roundtrip_undo_restores_exact_state(self):
         self.empty()
         before = transfer.capture()

@@ -315,7 +315,13 @@ async function viewVolume(name) {
     <audio id="volume-player" controls class="hidden" style="width:100%;margin-top:14px"></audio>`;
 
   const run = (steps, button) => guard(async () => {
-    await api("/api/run", { method: "POST", body: { volume: name, stems: steps.includes("volume") ? chapters.map(c => c.stem) : [...selected], steps,
+    const stems = steps.includes("volume") ? chapters.map(c => c.stem) : [...selected];
+    const force = steps.length === 1 && steps[0] === "analyze";
+    const targets = stems.length ? chapters.filter(c => stems.includes(c.stem)) : chapters;
+    if (force && targets.some(c => c.state !== "new") && !await modal("Analyze Text again?",
+      `<p>Analyze ${targets.length} chapter${targets.length === 1 ? "" : "s"} in this batch again?</p><p>Successful analysis replaces existing speaker assignments and take selections, including manual corrections. Spoken-text edits that no longer match will need review. Audio and video may need regeneration.</p><p class="muted small">Your manuscript files and saved voices are unchanged.</p>`,
+      [{label:"Cancel", value:false}, {label:"Analyze again", value:true, primary:true}])) return;
+    await api("/api/run", { method: "POST", body: { volume: name, stems, steps, force,
       automatic: steps.join(",") === "analyze,render,export" } });
     toast("Job queued. Follow progress in the lower-left panel.");
     pollNow();
@@ -373,9 +379,17 @@ async function viewChapter(volume, stem) {
   const data = await api(`/api/chapter?volume=${encodeURIComponent(volume)}&stem=${encodeURIComponent(stem)}`);
   const c = data.chapter, lines = data.lines;
   const unclear = lines.filter((l) => l.speaker === UNASSIGNED).length;
+  const contextual = lines.filter((l) => l.basis === "context").length;
+  const reviewCount = unclear + lines.filter((l) => l.flagged).length + contextual;
+  const sceneNumbers = [...new Set(lines.map((l) => l.scene ?? 0))].sort((a, b) => a - b);
+  const sceneLabel = (scene) => {
+    const names = (lines.find((l) => l.scene === scene)?.context_ids || [])
+      .map((id) => (data.contexts || []).find((c) => c.id === id)?.name).filter(Boolean);
+    return names.length ? names.join(", ") : "No context";
+  };
   const speakers = [...new Set(lines.map((l) => l.speaker).filter((s) => ![NARRATOR, UNASSIGNED, PAUSE].includes(s)))];
   const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) =>
-    lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged)));
+    lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged || line.basis === "context")));
   const kind = (line) => line.speaker === PAUSE ? "pause" : HEADING.test(line.text) ? "heading" : line.speaker === NARRATOR ? "narration" : "speech";
   view.innerHTML = `${backButton(parentRoute())}
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
@@ -393,17 +407,19 @@ async function viewChapter(volume, stem) {
     ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
     ${data.spoken_error ? `<div class="banner"><div><b>Spoken-text edits need review</b><p>${esc(data.spoken_error)}</p><details><summary>Stale edits</summary>${data.spoken_conflicts.map(entry=>`<div class="log">${esc(entry.text || "")}</div>`).join("")}</details><button class="btn" data-clear-spoken>Discard stale spoken-text edits</button></div></div>` : ""}
     ${data.voice_error ? `<div class="banner"><div><b>Voice rules need review</b><p>${esc(data.voice_error)}</p><button class="btn" data-clear-voice-conflicts>Review and clear stale line overrides</button></div></div>` : ""}
-    ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} lines need a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
+    ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} ${unclear === 1 ? "line needs" : "lines need"} a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
+    ${(data.blockers || []).length ? `<div class="banner">${icon("flag")}<div><b>${data.blockers.length} ${data.blockers.length === 1 ? "character needs" : "characters need"} approval in this chapter.</b><p>${data.blockers.map((b) => esc(b.label)).join(", ")}</p><div class="row">${data.blockers.map((b) => `<button class="btn" data-review-character="${esc(b.name)}">Review ${esc(b.label)}</button>`).join("")}</div></div></div>` : ""}
     ${data.report ? `<details class="card" style="padding:14px 18px"><summary><b>Analysis report</b></summary><div class="log" style="margin-top:10px">${esc(data.report)}</div></details>` : ""}
     <div class="card" style="margin-top:16px">
+      ${lines.length ? `<div class="context-strip" aria-label="Narrative contexts by scene">${sceneNumbers.map((scene) => `<button type="button" class="btn small" data-scene-context="${scene}" title="Change the narrative context of this scene">Scene ${scene + 1} · ${esc(sceneLabel(scene))}</button>`).join("")}</div>` : ""}
       ${lines.length ? `<div class="row between"><div class="filters" style="margin:0">
-          ${[["all", "All text"], ["dialogue", "Dialogue only"], ["review", `Needs review (${unclear + lines.filter((l) => l.flagged).length})`]].map(([key, label]) =>
+          ${[["all", "All text"], ["dialogue", "Dialogue only"], ["review", `Lines to review (${reviewCount})`]].map(([key, label]) =>
             `<span class="chip ${lineFilter === key ? "on" : ""}" data-lines="${key}">${label}</span>`).join("")}</div>
           <div class="legend">${speakers.map((s) => `<button type="button" class="chip" data-legend-voice="${esc(s)}" title="Edit reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`).join("")}</div></div>
         <div class="script" id="script">${shown.map(({ line, index }, position) => `
           <div class="line ${kind(line)} ${line.joined ? "joined" : position ? "gap" : ""} ${line.speaker === UNASSIGNED ? "unclear" : ""} ${line.omitted ? "omitted" : ""}" data-index="${index}" style="--c:${colorFor(line.speaker)}" ${line.omitted ? 'title="Omitted: the fixed voice identifies the speaker. You can change this in Settings."' : ""}>
             <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.speaker)}</button>`}</div>
-            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}</div>
+            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.basis === "context" ? ` <span class="chip" title="Speaker inferred from narrative context; review this line.">context</span>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}</div>
             <div class="tools">
               ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play from here">${icon("play")}</button>` : ""}
               ${![PAUSE,UNASSIGNED].includes(line.speaker) ? `<button type="button" class="btn small reading-voice" data-voice-rule="${index}" title="Edit the reading voice for this line">Voice: ${esc(line.read_as || line.speaker)}</button>` : ""}
@@ -432,6 +448,10 @@ async function viewChapter(volume, stem) {
   $("#first-analyze")?.addEventListener("click", (e) => analyze(e.currentTarget));
   $("#open").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "chapter", volume, stem } }));
   $$("[data-lines]").forEach((element) => element.onclick = () => { lineFilter = element.dataset.lines; viewChapter(volume, stem); });
+  $$("[data-review-character]").forEach((button) => button.onclick = (event) =>
+    guard(() => reviewCharacter(button.dataset.reviewCharacter, volume, stem, data, lines), event.currentTarget));
+  $$("[data-scene-context]").forEach((button) => button.onclick = (event) =>
+    guard(() => editSceneContext(+button.dataset.sceneContext, volume, stem, data), event.currentTarget));
 
   const save = async (rows, message) => {
     const result = await api("/api/chapter/rows", { method: "PUT", body: { volume, stem, rows, source_hash:data.source_hash } });
@@ -476,6 +496,98 @@ async function viewChapter(volume, stem) {
     };
   }
   scheduleRefresh(() => { if (!player || player.paused) viewChapter(volume, stem); });
+}
+
+/* narrative contexts: reviewed scene bindings, never inferred from the text */
+async function editSceneContext(scene, volume, stem, data) {
+  const state = await api("/api/character-registry");
+  const volumeId = (state.volumes || []).find((v) => v.name === volume)?.id;
+  if (!volumeId) { toast("This volume is no longer registered."); return; }
+  const contexts = (state.document.organization.contexts || []).filter((c) => c.volume === volumeId);
+  const current = (data.lines.find((l) => l.scene === scene)?.context_ids || [])[0] || "";
+  const choice = await modal(`Scene ${scene + 1} context`,
+    `<p>Bind this scene to a narrative context. Contexts scope aliases and guide speaker detection; they never rewrite the chapter.</p>
+     <label class="field"><span>Narrative context</span><select name="context"><option value="">No context</option>${contexts.map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`).join("")}<option value="new">New context…</option></select></label>`,
+    [{ label: "Cancel", value: null }, { label: "Save context", value: "form", primary: true }]);
+  if (!choice) return;
+  let context = choice.context;
+  if (context === "new") {
+    const form = await modal("New narrative context",
+      `<label class="field"><span>Name</span><input name="name" maxlength="160" placeholder="Experience — Leonatus"></label>
+       <label class="field"><span>Description</span><textarea name="description" maxlength="2000" placeholder="What this scene is and who can appear in it."></textarea></label>`,
+      [{ label: "Cancel", value: null }, { label: "Create and bind", value: "form", primary: true }]);
+    if (!form || !form.name.trim()) return;
+    const created = await api("/api/character-registry/contexts", { method: "POST",
+      body: { action: "create", name: form.name.trim(), description: form.description || "", volume: volumeId, revision: state.revision } });
+    context = (created.document.organization.contexts || []).find((c) => c.name === form.name.trim())?.id;
+    if (!context) { toast("The context was created but could not be bound. Reload the chapter."); return; }
+  }
+  await api("/api/character-registry/scene-context", { method: "PUT",
+    body: { volume, stem, scene, context: context || null, source_hash: data.source_hash } });
+  toast(context ? "Scene context saved." : "Scene context cleared.");
+  viewChapter(volume, stem);
+}
+
+/* chapter-level identity review: approval is global, replacement stays in this chapter */
+const STATUS_NAMES = { approved: "Approved", provisional: "Provisional", needs_review: "Needs review" };
+async function reviewCharacter(name, volume, stem, data, lines) {
+  const state = await api("/api/character-registry");
+  const doc = state.document, meta = doc.organization.characters[name];
+  if (!meta) { toast("This character is no longer in the registry."); return; }
+  const action = await modal(`Review ${meta.label}`,
+    `<p><b>${esc(meta.label)}</b> <span class="chip warn">${esc(STATUS_NAMES[meta.status] || meta.status)}</span></p>
+     ${meta.reason ? `<p class="small">${esc(meta.reason)}</p>` : ""}
+     <p class="small muted">Approving the identity changes who may be generated, not how anything sounds. Replacing a speaker changes this chapter only.</p>`,
+    [{ label: "Cancel", value: null }, { label: "Open full details", value: "details" },
+     { label: "Replace in chapter…", value: "replace" }, { label: "Approve identity", value: "approve", primary: true }]);
+  if (action === "details") {
+    sessionStorage.setItem("registryFocus", name);
+    sessionStorage.setItem("registryReturn", location.hash);
+    location.hash = "#/characters";
+    return;
+  }
+  if (action === "replace") {
+    const targets = doc.characters.filter((c) => c.name !== name).map((c) => c.name);
+    if (!targets.length) { toast("There is no other character to use."); return; }
+    const form = await modal("Replace in this chapter",
+      `<p>Every line spoken by <b>${esc(meta.label)}</b> in this chapter becomes the chosen character. Other chapters keep their assignments.</p>
+       <label class="field"><span>Existing character</span><select name="target">${targets.map((t) => `<option>${esc(t)}</option>`).join("")}</select></label>`,
+      [{ label: "Cancel", value: null }, { label: "Replace in this chapter", value: "form", primary: true }]);
+    if (!form) return;
+    const rows = lines.map((line) => [line.speaker === name ? form.target : line.speaker, line.text, line.joined, line.variant]);
+    await api("/api/chapter/rows", { method: "PUT", body: { volume, stem, rows, source_hash: data.source_hash } });
+    toast(`This chapter now uses ${form.target} for those lines.`);
+    viewChapter(volume, stem);
+    return;
+  }
+  if (action === "approve") {
+    const categories = doc.organization.categories.map((c) => [c.id, c.name]);
+    const form = await modal("Approve identity",
+      `<label class="field"><span>Category</span><select name="category">${categories.map(([id, label]) => `<option value="${esc(id)}" ${id === meta.category ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
+       <label class="row"><input type="checkbox" name="addVolume" checked> Add ${esc(volume)} to this character's volumes</label>
+       <p class="small muted">The preview lists every chapter whose audio or video changes. Approval alone does not change the sound.</p>`,
+      [{ label: "Cancel", value: null }, { label: "Preview approval", value: "form", primary: true }]);
+    if (!form) return;
+    const updated = structuredClone(state.document);
+    const record = updated.organization.characters[name];
+    record.status = "approved";
+    if (form.category) record.category = form.category;
+    if (form.addVolume) {
+      const volumeId = (state.volumes || []).find((v) => v.name === volume)?.id;
+      if (volumeId) record.volumes = [...new Set([...(record.volumes || []), volumeId])];
+    }
+    const report = await api("/api/character-registry/preview", { method: "POST", body: { revision: state.revision, document: updated } });
+    const audio = report.effects.filter((e) => e.audio).length;
+    const video = report.effects.filter((e) => e.video).length;
+    const ready = report.effects.filter((e) => e.resolved).length;
+    const confirm = await modal("Apply identity approval?",
+      `<p>${audio} ${audio === 1 ? "chapter needs" : "chapters need"} new audio, ${video} ${video === 1 ? "needs" : "need"} a new video, and ${ready} ${ready === 1 ? "becomes" : "become"} ready to generate.</p><p class="small muted">Nothing is generated automatically. The manuscript and saved voices are unchanged.</p>`,
+      [{ label: "Cancel", value: false }, { label: "Apply approval", value: true, primary: true }]);
+    if (!confirm) return;
+    await api("/api/character-registry", { method: "PUT", body: { request: report.request, plan_id: report.plan_id } });
+    toast(`${meta.label} is approved.`);
+    viewChapter(volume, stem);
+  }
 }
 
 /* speaker picker */

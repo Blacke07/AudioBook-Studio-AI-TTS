@@ -14,6 +14,7 @@ import uvicorn
 import export
 import fixed_voices
 import glossary
+import character_registry
 import model_profile
 import pipeline
 import presets
@@ -236,6 +237,8 @@ def chapter(volume: str, stem: str):
         spoken = {chunk.line for chunk in chunks}
     except ValueError:
         spoken = None
+    registry_document = character_registry.document()
+    registry = character_registry.organization(registry_document)
     lines = []
     try:
         reading = voice_rules.effective(script, rows)
@@ -248,20 +251,43 @@ def chapter(volume: str, stem: str):
     except ValueError as error:
         spoken_edits={}; spoken_error=str(error)
     if script:
+        scenes = character_registry.scene_indices(script["rows"])
+        context_names = {context["id"]: context["name"] for context in registry["contexts"]}
+        scene_contexts = {number: character_registry.contexts_for(volume, stem, number,
+                                                                 registry_document, script["source_hash"])
+                          for number in set(scenes)}
         for index, row in enumerate(script["rows"]):
+            bound = scene_contexts[scenes[index]]
             line = {"speaker": row[0], "read_as":reading.get(index,row[0]), "text": row[1], "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
                     "variant": int(row[3]) if len(row) > 3 else 0,
                     "flagged": index in meta.get("flagged_lines", []),
+                    "scene": scenes[index],
+                    "basis": (script.get("attribution") or {}).get(str(index), {}).get("basis",
+                             "explicit" if row[0] != UNASSIGNED else "unclear"),
+                    "context_ids": bound,
+                    "contexts": [context_names[key] for key in bound],
                     "omitted": spoken is not None and row[0] == NARRATOR and index not in spoken
                                and SIMPLE_TAG_RE.match(str(row[1])) is not None}
             if index in takes:
                 line["start"] = takes[index][0]["start"]
                 line["seconds"] = round(sum(take["seconds"] for take in takes[index]), 2)
             lines.append(line)
+    used = sorted({row[0] for row in script["rows"]}) if script else []
+    blockers = []
+    for name in used:
+        metadata = registry["characters"].get(name)
+        if not metadata:
+            continue
+        if metadata["status"] == "needs_review" or (metadata["status"] == "provisional"
+                                                    and not registry["allow_provisional"]):
+            blockers.append({"name": name, "label": metadata["label"], "status": metadata["status"]})
     return {"chapter": info, "lines": lines, "report": script["report"],
             "manual_draft": manual_draft, "source_hash": script["source_hash"],
             "voice_rules":script.get("voice_rules",{}), "voice_error":voice_error,
             "spoken_error":spoken_error, "spoken_conflicts":script.get("spoken_text",{}).get("conflicts",[]),
+            "blockers": blockers, "unassigned": sum(1 for line in lines if line["speaker"] == UNASSIGNED),
+            "contexts": [{"id": context["id"], "name": context["name"]} for context in registry["contexts"]
+                         if context["volume"] == character_registry.volume_key(volume)],
             "speakers": [NARRATOR, *[row[0] for row in rows]]}
 
 
@@ -298,6 +324,7 @@ def _save_rows(item, script, rows):
     script["rows"] = clean
     script = voice_rules.reconcile(original_script, script)
     script = spoken_text.reconcile(original_script, script)
+    script.pop("attribution", None)  # manual choices replace the analysis confidence notes
     script["speakers"] = list(dict.fromkeys(row[0] for row in clean if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
     item.save_script(script)
     if item.error_file.exists() and item.error_file.read_text(encoding="utf-8").startswith("analysis:"):
@@ -602,6 +629,7 @@ app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
 
 
 if __name__ == "__main__":
+    character_registry.migrate()
     if "--no-browser" not in sys.argv:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}/")).start()
     print(f"AudioBook Studio: http://127.0.0.1:{PORT}/  (close this window to stop)")

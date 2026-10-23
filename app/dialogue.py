@@ -192,17 +192,25 @@ def tag_subject(segments, index):
 
 
 def resolve_name(subject, aliases):
-    """Canonical character for an explicit named tag; pronouns and descriptions stay unresolved."""
-    if not subject or subject.split()[0].lower() in {"he", "she", "they", "i", "we", "you", "the", "a", "an",
-                                                     "his", "her", "their", "my", "our", "someone", "somebody"}:
+    """Canonical character for an explicit named tag. Pronouns stay unresolved; a described role resolves
+    only when the author defined it as an alias in the active context."""
+    if not subject:
         return ""
-    return aliases.get(subject.lower(), subject)
+    known = aliases.get(subject.lower())
+    if known:
+        return known
+    if subject.split()[0].lower() in {"he", "she", "they", "i", "we", "you", "the", "a", "an",
+                                      "his", "her", "their", "my", "our", "someone", "somebody"}:
+        return ""
+    return subject
 
 
 def prepare_script(text, assign_dialogue=True, aliases=None):
-    """Rows [speaker, text, continues paragraph]; explicitly tagged lines get their named speaker."""
+    """Rows [speaker, text, continues paragraph]; explicitly tagged lines get their named speaker.
+    `aliases` is one map, or a function of the scene number when alias scope depends on the context."""
     segments = segment(text)
-    rows = []
+    resolve = aliases if callable(aliases) else (lambda scene: aliases or {})
+    rows, scene = [], 0
     for index, item in enumerate(segments):
         if item.kind == "pause":
             role = PAUSE
@@ -211,8 +219,10 @@ def prepare_script(text, assign_dialogue=True, aliases=None):
         elif item.kind != "dialogue" or not assign_dialogue:
             role = NARRATOR
         else:
-            role = resolve_name(tag_subject(segments, index), aliases or {}) or UNASSIGNED
+            role = resolve_name(tag_subject(segments, index), resolve(scene)) or UNASSIGNED
         rows.append([role, item.text, item.joined])
+        if item.kind == "pause":
+            scene += 1
     return rows
 
 

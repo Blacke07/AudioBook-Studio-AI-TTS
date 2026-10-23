@@ -127,9 +127,18 @@ def clean_script(data):
     validate_script(data)
     from spoken_text import validate
     validate(data)
+    attribution = data.get('attribution', {})
+    if not isinstance(attribution, dict) or len(attribution) > 100000:
+        raise ValueError('Invalid attribution metadata.')
+    for key, value in attribution.items():
+        if not re.fullmatch(r'\d{1,7}', str(key)) or not isinstance(value, dict) or set(value) - {'basis', 'reason'}:
+            raise ValueError('Invalid attribution metadata.')
+        if value.get('basis') not in ('context', 'unclear') or not isinstance(value.get('reason', ''), str) \
+                or len(value.get('reason', '')) > 180:
+            raise ValueError('Invalid attribution metadata.')
     # Keep row text byte-for-byte at the string level; only known metadata is accepted.
     return {key:value for key,value in data.items() if key in
-            ('source_hash','rows','report','speakers','added','ai','analyzed','voice_rules','spoken_text')}
+            ('source_hash','rows','report','speakers','added','ai','analyzed','voice_rules','spoken_text','attribution')}
 
 
 def check_voice(entry, content):
@@ -265,7 +274,13 @@ def parse_files(files, ignored=()):
         for volume in raw_volumes:
             if not isinstance(volume,dict) or not isinstance(volume.get('source'),str) or '\x00' in volume['source']:
                 raise ValueError('Invalid volume source.')
-            volumes.append({'name':component(volume.get('name')), 'source':volume['source']})
+            record = {'name':component(volume.get('name')), 'source':volume['source']}
+            key = volume.get('id')
+            if key is not None:
+                if not isinstance(key,str) or not re.fullmatch('[a-zA-Z0-9_-]{1,80}',key):
+                    raise ValueError('Invalid volume ID.')
+                record['id'] = key
+            volumes.append(record)
         names = {v['name'] for v in volumes}
         if len({n.casefold() for n in names})!=len(volumes):
             raise ValueError('Duplicate volume name.')

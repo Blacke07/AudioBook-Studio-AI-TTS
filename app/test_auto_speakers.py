@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import glossary
 from auto_speakers import context_window, release_model, validate_assignments
-from dialogue import NARRATOR, PAUSE, UNASSIGNED
+from dialogue import NARRATOR, PAUSE, UNASSIGNED, prepare_script
 
 
 class AttributionTests(unittest.TestCase):
@@ -65,6 +65,26 @@ class AttributionTests(unittest.TestCase):
         records = context_window(rows, [4])
         self.assertEqual([record["id"] for record in records], [2, 3, 4])
         self.assertEqual(records[1]["speaker"], "Riley")
+
+    def test_alias_is_resolved_inside_its_own_row_context(self):
+        first = validate_assignments([self.assignment(1, 'the keeper')], [1], 'The keeper spoke.', ['Ada', 'Morgan'],
+                                     alias_maps={1: {'the keeper': 'Ada'}})
+        second = validate_assignments([self.assignment(1, 'the keeper')], [1], 'The keeper spoke.', ['Ada', 'Morgan'],
+                                      alias_maps={1: {'the keeper': 'Morgan'}})
+        self.assertEqual(first[0]['speaker'], 'Ada')
+        self.assertEqual(second[0]['speaker'], 'Morgan')
+
+    def test_alias_scoped_to_another_context_is_not_accepted(self):
+        result = validate_assignments([self.assignment(1, 'the keeper')], [1], 'The keeper spoke.', ['Ada'],
+                                      alias_maps={1: {'ada': 'Ada'}}, scoped_aliases={'the keeper'})
+        self.assertIsNone(result[0]['speaker'])
+        self.assertIn('context', result[0]['reason'])
+
+    def test_prepare_script_resolves_the_same_role_differently_per_scene(self):
+        text = '— Keep it, the keeper said.\n\n❦\n\n— Stop, the keeper said.'
+        rows = prepare_script(text, aliases=lambda scene: {'the keeper': 'Ada' if scene == 0 else 'Morgan'})
+        speakers = [row[0] for row in rows if row[0] not in (NARRATOR, PAUSE)]
+        self.assertEqual(speakers, ['Ada', 'Morgan'])
 
 
 class GlossaryTests(unittest.TestCase):

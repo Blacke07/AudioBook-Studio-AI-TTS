@@ -37,7 +37,7 @@ const ChapterWorkflow = (() => {
       ? `<p class="workflow-hint">Your Reading policy explicitly allows the narrator to read unassigned dialogue. Choose “Wait for my review” in Settings to require speaker assignments first.</p>` : "";
     return `<div class="workflow-categories" aria-label="Ordered chapter workflow">` +
       category("text", 1, "Text", "book",
-        action("run-analyze", "Analyze Text", "wand", "Identify speakers. Existing analyzed chapters are kept; new or changed text is analyzed.") +
+        action("run-analyze", "Analyze Text", "wand", "Analyze or reanalyze this batch to identify speakers. Confirmation is required before replacing existing assignments.") +
         action("review-text", "Review speakers", "flag", "Open the chapters that still need speaker assignments.", review.length ? "" : "disabled") +
         action("diagnose-text", "Diagnose / repair", "info", "Explain errors and choose a repair. No voices or text are changed silently.", errors.length ? "" : "disabled")) +
       category("audio", 2, "Audio", "sound",

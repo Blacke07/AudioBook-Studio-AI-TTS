@@ -45,15 +45,18 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
         with LOCK:
             close_engine()  # Gemma needs the GPU memory Qwen holds
             try:
-                rows, _, entries, report, speakers = attribute(text, entries, settings["narrator"]["mode"],
+                rows, _, entries, report, speakers, attribution = attribute(text, entries, settings["narrator"]["mode"],
                                                                progress, release,
-                                                               batch_size=REPAIR_BATCH if repair else BATCH, proposals=proposals)
+                                                               batch_size=REPAIR_BATCH if repair else BATCH, proposals=proposals,
+                                                               volume=chapter.volume, chapter=chapter.stem,
+                                                               source_hash=project.text_hash(text))
             except AnalysisError as error:
                 project.write_json(chapter.work / "analysis-error.json",
                                    {**error.diagnostic, "source_hash": project.text_hash(text)})
                 raise
     else:
         rows = manual_script(chapter, entries)["rows"]
+        attribution = {}
         speakers = list(dict.fromkeys(row[0] for row in rows if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
         for name in speakers:
             if name not in {row[0] for row in entries}:
@@ -65,6 +68,7 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
     from voice_rules import reconcile
     from spoken_text import reconcile as reconcile_spoken
     chapter.save_script(reconcile_spoken(chapter.script(), reconcile(chapter.script(), {"source_hash": project.text_hash(text), "rows": rows, "report": report,
+                         "attribution": attribution,
                          "speakers": speakers, "added": added, "ai": bool(use_ai and settings["multi_voice"]),
                          "analyzed": datetime.now().isoformat(timespec="seconds")})))
     chapter.error_file.unlink(missing_ok=True)
@@ -75,7 +79,8 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
 def manual_script(chapter, entries):
     """A text-preserving draft, available even when the model is unavailable. This never writes files."""
     text = chapter.text()
-    rows = prepare_script(text, aliases=glossary.alias_map(entries))
+    from character_registry import alias_resolver
+    rows = prepare_script(text, aliases=alias_resolver(chapter.volume, chapter.stem, project.text_hash(text)))
     return {"source_hash": project.text_hash(text), "rows": [[*row[:3], 0] for row in rows],
             "report": "Prepared without AI. Assign unresolved speakers manually; the source text is unchanged.",
             "speakers": list(dict.fromkeys(row[0] for row in rows if row[0] not in (NARRATOR, PAUSE, UNASSIGNED))),

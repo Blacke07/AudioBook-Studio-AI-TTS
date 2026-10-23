@@ -42,8 +42,8 @@ class AnalysisRepairTests(unittest.TestCase):
         text = "\n\n".join("— A complete invented sentence." for _ in range(7))
         with patch.object(speakers, "ensure_ollama"), patch.object(speakers, "request", side_effect=response), \
                 patch.object(speakers, "release_model") as release:
-            rows, _, entries, report, _ = speakers.attribute(text, [], "VoiceDesign", lambda *a, **k: None,
-                                                            batch_size=speakers.REPAIR_BATCH)
+            rows, _, entries, report, _, _ = speakers.attribute(text, [], "VoiceDesign", lambda *a, **k: None,
+                                                                batch_size=speakers.REPAIR_BATCH)
         self.assertEqual([len(ids) for ids, _ in calls], [3, 3, 1])
         self.assertTrue(all(row[0] == "Unassigned" for row in rows))
         self.assertEqual(entries, [])
@@ -246,6 +246,32 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no longer exist"):
                 studio.run({"volume":"Demo","stems":["002"],"steps":["analyze"]})
         submit.assert_not_called()
+
+    def test_api_passes_the_manual_reanalysis_flag_for_only_the_selected_chapters(self):
+        import app as studio
+        with patch.object(project, "chapters", return_value=[Mock(stem="001"), Mock(stem="002")]), \
+                patch.object(studio.worker, "submit") as submit:
+            studio.run({"volume":"Demo", "stems":["002"], "steps":["analyze"], "force":True})
+        submit.assert_called_once_with("Demo", ["002"], ["analyze"], True, False)
+
+    def test_repeated_manual_analysis_runs_ready_chapters_while_resume_keeps_them(self):
+        selected = Mock(stem="001")
+        selected.script.return_value = {"rows":[["Narrator", "An invented sentence.", False, 0]]}
+        for force in (False, True):
+            with self.subTest(force=force):
+                worker = self.worker()
+                with patch.object(project, "chapters", return_value=[selected, Mock(stem="002")]), \
+                        patch.object(project, "load_settings", return_value={"multi_voice":True, "video":{"enabled":False}}), \
+                        patch.object(glossary, "load", return_value=[]), \
+                        patch.object(pipeline, "status", return_value=("generated", {"text_ready":True})), \
+                        patch.object(pipeline, "analyze", return_value=([], "", [])) as analyze, \
+                        patch("worker.release_model"):
+                    job = {"volume":"Demo", "stems":["001"], "steps":["analyze"], "force":force}
+                    worker._run(job)
+                    worker._run(job)
+                self.assertEqual(analyze.call_count, 2 if force else 0)
+                for call in analyze.call_args_list:
+                    self.assertIs(call.args[0], selected)
 
     def test_repair_endpoint_queues_only_the_requested_analysis_and_mode(self):
         import app as studio

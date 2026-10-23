@@ -82,6 +82,44 @@ test('partial and filtered selection preserves hidden chapters in the batch', as
   assert.deepEqual(Array.from(request.steps), ['render']);
 });
 
+test('Analyze Text can run again after the first analysis, with confirmation', async () => {
+  const chapters = [chapter('one', 'new')];
+  const p = page(chapters), prompts = [];
+  p.sandbox.modal = async (...args) => {prompts.push(args); return true;};
+  await p.render();
+  await p.element('#run-analyze').onclick({currentTarget:{}});
+  assert.equal(prompts.length, 0);
+  chapters[0].state = 'analyzed';
+  await p.render();
+  await p.element('#run-analyze').onclick({currentTarget:{}});
+  const jobs = p.calls.filter(([path]) => path === '/api/run').map(([, options]) => options.body);
+  assert.equal(jobs.length, 2);
+  assert.ok(jobs.every(job => job.force === true && job.automatic === false));
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0][1], /speaker assignments/i);
+});
+
+test('canceling repeated volume analysis does not queue a job', async () => {
+  const p = page([chapter('one', 'generated')]);
+  p.sandbox.modal = async () => false;
+  await p.render();
+  await p.element('#run-analyze').onclick({currentTarget:{}});
+  assert.equal(p.calls.filter(([path]) => path === '/api/run').length, 0);
+});
+
+test('manual analysis respects selection and automatic processing keeps existing analysis', async () => {
+  const p = page();
+  p.sandbox.modal = async () => {throw new Error('The selected chapter has no analysis to replace.');};
+  await p.select(['two']);
+  await p.element('#run-analyze').onclick({currentTarget:{}});
+  await p.element('#run-all').onclick({currentTarget:{}});
+  const jobs = p.calls.filter(([path]) => path === '/api/run').map(([, options]) => options.body);
+  assert.deepEqual(Array.from(jobs[0].stems), ['two']);
+  assert.equal(jobs[0].force, true);
+  assert.notEqual(jobs[1].force, true);
+  assert.equal(jobs[1].automatic, true);
+});
+
 test('individual toggles update the master checkbox, including the empty filter', async () => {
   const p = page();
   await p.render();

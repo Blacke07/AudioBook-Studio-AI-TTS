@@ -156,7 +156,7 @@ class NotReady(ValueError):
     """The chapter needs the author (analysis missing, text changed or lines to attribute)."""
 
 
-def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_rules=None, script_override=None, registry_document=None):
+def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_rules=None, script_override=None, registry_document=None, enforce_status=True):
     """The ordered passages of a chapter with their voices and keys, from its saved script."""
     text = chapter.text() if text is None else text
     narrator = narrator_voice(settings)
@@ -168,7 +168,7 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
             raise NotReady("The chapter text changed after analysis. Analyze it again.")
         from character_registry import check_reading
         try:
-            check_reading(script, registry_document)
+            check_reading(script, registry_document, enforce=enforce_status)
         except ValueError as error:
             raise NotReady(str(error)) from error
         rows = [list(row) for row in script["rows"]]

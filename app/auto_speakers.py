@@ -49,6 +49,9 @@ Gender: use the glossary, or explicit pronouns/descriptions in the story; otherw
 Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
 Give a brief reason (at most twelve words). For a new speaker you may suggest a category ID from categories.
 Category order is author priority, never evidence of who speaks. Never prefer a major character over textual evidence.
+`narrative_contexts` names the verified scene contexts of the requested lines. They may disambiguate a role used by
+different people, but they are never proof by themselves. An alias applies only in the volume and context the author
+scoped it to; never carry a scoped alias into another context or invent an identity because the current volume is not listed.
 The output must match the supplied JSON schema."""
 
 
@@ -96,10 +99,12 @@ def _in_text(name, source):
     return re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", source, re.IGNORECASE) is not None
 
 
-def validate_assignments(items, ids, source, known, aliases=None, genders=None, hints=None, beats=None):
+def validate_assignments(items, ids, source, known, aliases=None, genders=None, hints=None, beats=None,
+                         alias_maps=None, scoped_aliases=None):
     """Check order and identities. `known` are accepted names, `aliases` maps lower-case aliases to names,
     `genders` gives glossary genders, `hints` the pronoun of each row's own speech tag and `beats` the
-    character acting right before the row."""
+    character acting right before the row. `alias_maps` gives the context-valid map of each row and
+    `scoped_aliases` the aliases whose validity is limited to a volume or context."""
     aliases, genders, hints = aliases or {}, genders or {}, hints or {}
     if not isinstance(items, list) or len(items) != len(ids):
         count = len(items) if isinstance(items, list) else "no valid list of"
@@ -121,11 +126,16 @@ def validate_assignments(items, ids, source, known, aliases=None, genders=None, 
         elif not speaker.strip() or speaker.strip() in (NARRATOR, UNASSIGNED, PAUSE, "Narrator"):
             speaker, basis, reason = None, "unclear", "AI did not name a character"
         else:
-            speaker = aliases.get(speaker.strip().lower(), speaker.strip())
-            if speaker not in known and not _in_text(speaker, source):
+            cleaned = speaker.strip()
+            row_aliases = (alias_maps or {}).get(expected_id) or aliases
+            if scoped_aliases and cleaned.lower() in scoped_aliases and cleaned.lower() not in row_aliases:
+                speaker, basis, reason = None, "unclear", "alias outside its volume or context"
+            else:
+                speaker = row_aliases.get(cleaned.lower(), cleaned)
+            if speaker and speaker not in known and not _in_text(speaker, source):
                 # An unsupported invented name is not accepted as a character identity.
                 speaker, basis, reason = None, "unclear", "name not present in the text or glossary"
-            elif speaker[0].islower():
+            elif speaker and speaker[0].islower():
                 speaker = speaker[0].upper() + speaker[1:]  # "the conductor" -> "The conductor"
         expected = PRONOUNS.get(hints.get(expected_id, ""))
         actor = (beats or {}).get(expected_id)
@@ -177,12 +187,15 @@ def beat_hints(segments, index, aliases):
     return {}
 
 
-def relevant_characters(rows, text):
-    """Glossary entries mentioned (by name or alias) in this text, as compact facts for the model."""
+def relevant_characters(rows, text, allowed=None):
+    """Glossary entries mentioned (by name or alias) in this text, as compact facts for the model.
+    `allowed` limits aliases to those valid in the chapter's reviewed contexts."""
     result = []
     for name, aliases, gender, note, *_ in rows:
-        if any(_in_text(alias, text) for alias in [name, *glossary.aliases_of(aliases)]):
-            result.append({"name": name, "aliases": glossary.aliases_of(aliases),
+        mentioned = [alias for alias in [name, *glossary.aliases_of(aliases)]
+                     if allowed is None or alias.casefold() in allowed.get(name, set())]
+        if any(_in_text(alias, text) for alias in mentioned):
+            result.append({"name": name, "aliases": [alias for alias in mentioned if alias != name],
                            "gender": glossary.GENDERS[gender], "note": note})
     return result
 
@@ -195,7 +208,8 @@ def release_model():
         pass  # Ollama not running: nothing is loaded.
 
 
-def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, batch_size=BATCH, proposals=None):
+def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, batch_size=BATCH,
+              proposals=None, volume=None, chapter=None, source_hash=None):
     """Split the text, take named speech tags literally, ask Gemma only for the rest, propose voices for new
     characters. Existing glossary voices are never changed. Returns script rows, source, glossary, report."""
     if not text.strip():
@@ -203,10 +217,25 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
     if batch_size not in (BATCH, REPAIR_BATCH):
         raise ValueError("Unsupported analysis batch size.")
     entries = glossary.normalize(glossary_rows)
-    aliases = glossary.alias_map(entries)
     genders = {row[0]: glossary.GENDERS[row[2]] for row in entries}
     segments = segment(text)
-    rows = prepare_script(text, aliases=aliases)
+    scenes, scene = [], 0
+    for item in segments:
+        scenes.append(scene)
+        if item.kind == "pause":
+            scene += 1
+    from character_registry import alias_resolver, contexts_for, document, organization
+    registry_data = document()
+    registry = organization(registry_data)
+    if volume and chapter:
+        resolve = alias_resolver(volume, chapter, source_hash, registry_data)
+        scene_contexts = {number: contexts_for(volume, chapter, number, registry_data, source_hash)
+                          for number in set(scenes)}
+    else:
+        base_aliases = glossary.alias_map(entries)
+        resolve = lambda number: base_aliases
+        scene_contexts = {}
+    rows = prepare_script(text, aliases=resolve)
     tagged = sum(1 for row, item in zip(rows, segments) if item.kind == "dialogue" and row[0] != UNASSIGNED)
     inner = sum(1 for row in rows if row[0] == INNER_VOICE)
     hints = {}
@@ -220,10 +249,16 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
     batches = [ids[i:i + batch_size] for i in range(0, len(ids), batch_size)]
     if batches:
         ensure_ollama()
-    characters = relevant_characters(entries, text)
-    from character_registry import organization
-    registry = organization()
+    allowed = {}
+    for number in set(scenes):
+        for alias, name in resolve(number).items():
+            allowed.setdefault(name, set()).add(alias)
+    characters = relevant_characters(entries, text, allowed)
     priorities = {cat['id']: index for index,cat in enumerate(registry['categories'])}
+    context_names = {context['id']: context['name'] for context in registry['contexts']}
+    context_notes = {context['name']: context.get('description', '') for context in registry['contexts']}
+    scoped_aliases = {alias.casefold() for meta in registry['characters'].values()
+                      for alias in (meta.get('alias_scopes') or {})}
     for character in characters:
         category = registry['characters'].get(character['name'], {}).get('category', 'uncategorized')
         character['category'] = category
@@ -239,14 +274,28 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                 if record["kind"] == "dialogue" and segments[index].after_blank:
                     record["new_exchange"] = True
                 if index in target_ids:
-                    record.update(beat_hints(segments, index, aliases))
+                    record.update(beat_hints(segments, index, resolve(scenes[index])))
                     if "action_by" in record:
                         beats[index] = record["action_by"]
                     if index in hints:
                         record["tag"] = hints[index]
-            from character_registry import organization
-            content = {"categories":organization()['categories'], "characters": characters, "other_known_speakers": [n for n in known if n not in genders],
+            active = []
+            for record in context:
+                if record["id"] not in target_ids:
+                    continue
+                names = [context_names[context_id]
+                         for context_id in scene_contexts.get(scenes[record["id"]], [])]
+                if names:
+                    record["context"] = names
+                    for name in names:
+                        if name not in active:
+                            active.append(name)
+            content = {"categories": registry['categories'], "characters": characters,
+                       "other_known_speakers": [n for n in known if n not in genders],
                        "context": context, "requested_ids": target_ids}
+            if active:
+                content["narrative_contexts"] = [{"name": name, "description": context_notes.get(name, "")}
+                                                 for name in active]
             schema = assignment_schema(target_ids)
             response = request("/api/chat", {
                 "model": MODEL, "stream": False, "think": False, "keep_alive": "2m",
@@ -263,7 +312,9 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                 except (KeyError, TypeError, json.JSONDecodeError) as error:
                     raise AnalysisError("AI returned invalid JSON.", "invalid_json", target_ids) from error
                 batch = validate_assignments(parsed.get("assignments") if isinstance(parsed, dict) else None,
-                                             target_ids, text, known, aliases, genders, hints, beats)
+                                             target_ids, text, known, genders=genders, hints=hints, beats=beats,
+                                             alias_maps={row_id: resolve(scenes[row_id]) for row_id in target_ids},
+                                             scoped_aliases=scoped_aliases)
             except AnalysisError as error:
                 error.diagnostic.update(model=MODEL, batch=batch_number + 1, batches=len(batches),
                                         batch_size=batch_size, done_reason=response.get("done_reason"))
@@ -316,4 +367,6 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
     lines.append("Context-based assignments can be wrong even when the name is valid. Review these carefully.")
     report = "\n".join(lines + notes)
     progress(1, desc="Proposed speaker assignments are ready")
-    return rows, text, entries, report, speakers
+    attribution = {str(item["id"]): {"basis": item["basis"], "reason": item["reason"]}
+                   for item in assignments if item["speaker"] and item["basis"] != "explicit"}
+    return rows, text, entries, report, speakers, attribution

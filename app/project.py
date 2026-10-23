@@ -127,11 +127,37 @@ def volumes():
     return _read_json(VOLUMES_FILE, [])
 
 
-def get_volume(name):
+def volume_id(volume):
+    """Stable volume identity; the display name may change without losing associations."""
+    return volume.get("id") or "volume-" + hashlib.sha1(volume["name"].casefold().encode("utf-8")).hexdigest()[:12]
+
+
+def ensure_volume_ids():
+    """Give every registered volume its stable ID once; existing IDs are never rewritten."""
+    items = volumes()
+    changed = False
+    for volume in items:
+        key = volume_id(volume)
+        if volume.get("id") != key:
+            volume["id"] = key
+            changed = True
+    if changed:
+        write_json(VOLUMES_FILE, items)
+    return items
+
+
+def find_volume(name):
     for volume in volumes():
         if volume["name"] == name:
             return volume
-    raise ValueError(f"Volume «{name}» does not exist.")
+    return None
+
+
+def get_volume(name):
+    volume = find_volume(name)
+    if volume is None:
+        raise ValueError(f"Volume «{name}» does not exist.")
+    return volume
 
 
 def add_volume(name, source):
@@ -147,7 +173,9 @@ def add_volume(name, source):
     if any(volume["name"].casefold() == name.casefold() for volume in volumes()):
         raise ValueError("This volume already exists. Use Edit volume to change its folder.")
     items = volumes()
-    items.append({"name": name, "source": str(source)})
+    record = {"name": name, "source": str(source)}
+    record["id"] = volume_id(record)
+    items.append(record)
     write_json(VOLUMES_FILE, items)
     return name
 

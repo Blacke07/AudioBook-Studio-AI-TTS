@@ -11,7 +11,7 @@ An `.abstudio` file is a ZIP archive. It is data, never a plugin or executable. 
 | `voices/registry.json` | cast | Fixed voice IDs, filenames, reference transcripts and provenance |
 | `voices/samples.json` | cast | Audition text and optional serious comparison text |
 | `voices/<filename>.wav` | cast | Only WAV files referenced by the registry |
-| `volumes.json` | volumes | Volume names and source folder paths; original chapter files are not embedded |
+| `volumes.json` | volumes | Volume IDs, display names and source folder paths; original chapter files are not embedded. Exported packages keep the stable volume ID on import. |
 | `scripts/<volume>/<chapter>/script.json` | volumes | Speaker assignments and their source hashes |
 
 Speaker assignments **contain the book text**. Export warns against sharing them publicly. Cast-only
@@ -84,10 +84,13 @@ Scripts may contain `spoken_text.lines` entries with `row`, `speaker`, `text_has
 
 Version 2 glossaries may include an optional `organization` object alongside `characters`:
 
-- `categories`: ordered records with stable `id`, display `name`, `description`, and `voice` (`own`, `Narrator`, or an existing character reference). `uncategorized` must remain present.
-- `characters`: metadata keyed by stable character identity: `category`, `status` (`approved`, `provisional`, `needs_review`), video `label`, volume `scope`, and evidence `reason`.
+- `categories`: ordered records with stable `id`, display `name`, `description`, and `voice` (`own`, `Narrator`, or an existing character reference). `uncategorized` must remain present. Array order is presentation priority; it never decides who speaks.
+- `characters`: metadata keyed by stable character identity: `category`, `status` (`approved`, `provisional`, `needs_review`), video `label`, evidence `reason`, optional `volumes` (stable volume IDs), optional `contexts` (narrative-context IDs), optional `alias_scopes` (alias to `volumes`/`contexts` where it is valid), and optional `labels` (context-specific video labels).
+- `contexts`: optional narrative contexts with stable `id`, `name`, `volume` (ID) and `description`, plus reviewed `scenes` bindings (`chapter`, `first`, `last`, `source_hash`). Bindings made for different chapter text are stale and are not applied.
 - `allow_provisional`: explicit permission to render provisional identities; false by default. It never resolves an Unassigned speaker or permits Needs review identities.
 
-Absent metadata preserves legacy character behavior. The first registry migration preserves existing fixed references as explicit own-voice choices. Changing category order or descriptions does not change passage keys. Video labels affect video fingerprints, not audio keys. Inherited category voices require a fixed reference; explicit chapter and line choices remain higher priority.
+Absent fields preserve legacy behavior. The migration gives each volume a stable ID and converts the legacy single-volume `scope` to explicit `volumes` membership once; it never widens a scoped alias to every volume. An alias claimed by two identities in the same volume or context stays unresolved. Analysis reuses an existing identity and records the volume where it speaks; it does not create a second identity because a volume was not yet listed.
 
-New analysis identities are scoped to the volume. Their internal stable names may carry a scope suffix; the video label remains readable. JSON imports are validated and staged, keep existing identities, and mark new characters for reference review because JSON contains no WAV recordings. Project packages preserve organization metadata and fixed recordings, keeping the receiving installation's provisional-reading permission. Merge rewrites speaker references transactionally, refuses conflicting chapter policies, keeps the target voice, and leaves old reference WAVs on disk. Only active references are included in subsequent exports.
+Changing category order, descriptions, membership, contexts, aliases or approval does not change passage keys. Moving a character between categories keeps the effective reading voice by materializing the previous target as an explicit `read_as` when inheritance would change. Renaming rewrites assignments and the `role` fields of existing audio metadata in one transaction; passage keys stay unchanged, so unchanged audio remains valid. Video labels, including context-specific labels, affect video fingerprints only. Inherited category voices require a fixed reference; explicit chapter and line choices remain higher priority.
+
+JSON imports are validated and staged, keep existing identities, drop foreign volume/context IDs, and mark new characters for reference review because JSON contains no WAV recordings. Project packages preserve organization metadata and fixed recordings, keeping the receiving installation's provisional-reading permission. Merge rewrites speaker references transactionally, refuses conflicting chapter policies, merges alias scopes, keeps the target voice, and leaves old reference WAVs on disk. Only active references are included in subsequent exports.

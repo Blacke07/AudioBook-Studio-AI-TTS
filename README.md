@@ -1,10 +1,32 @@
-# AudioBook Studio
+<p align="center">
+  <img src="assets/audiobook.png" width="96" alt="AudioBook Studio icon">
+</p>
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-D97745?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://buymeacoffee.com/4reign)
+<h1 align="center">AudioBook Studio</h1>
 
-Turn English TXT or DOCX chapters into an audiobook on your Windows computer. Use a narrator, fixed character voices, and optional videos with synchronized reading text.
+<p align="center">
+  <b>Turn English TXT or DOCX chapters into a full-cast audiobook, on your own computer.</b><br>
+  A narrator and a fixed voice for every character, kept the same from the first chapter to the last.<br>
+  No cloud, no account, no uploads.
+</p>
 
-**[Download the current installer](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe)** · [All downloads](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest) · [Report a problem](https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues)
+<p align="center">
+  <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
+  <img alt="NVIDIA RTX 20–50, 12 GB (8 GB experimental)" src="https://img.shields.io/badge/NVIDIA-RTX%2020%E2%80%9350%20%C2%B7%2012%20GB%20(8%20GB%20experimental)-76B900">
+  <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20locally-e27a4b">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
+  <a href="https://buymeacoffee.com/4reign"><img alt="Buy me a coffee" src="https://img.shields.io/badge/Buy%20me%20a%20coffee-D97745?logo=buymeacoffee&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <b><a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/download/current/AudioBookStudio-Setup.exe">Download the current installer</a></b> ·
+  <a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/releases/latest">All downloads</a> ·
+  <a href="https://github.com/Blacke07/AudioBook-Studio-AI-TTS/issues">Report a problem</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/chapter.png" alt="The chapter editor: every line shows who speaks it">
+</p>
 
 Your manuscripts are read without being modified. Speaker analysis and voice generation run locally. Internet access is needed to download installation components and models; no online voice account is required.
 
@@ -13,10 +35,22 @@ Your manuscripts are read without being modified. Speaker analysis and voice gen
 - A desktop window with its own launcher, shortcuts, remembered window position, and confirmation before stopping active work.
 - Local speaker attribution with Gemma and speech generation with Qwen3-TTS.
 - Two ready-made narrators and seven synthetic character voices, plus Voice Design and built-in speaker auditions.
-- A character registry with categories, reading-voice policies, provisional identities, and quick editing.
+- A character registry with categories, volume membership, narrative contexts, reading-voice policies, provisional identities, and quick editing.
 - A chapter editor for manual speaker assignments, reading-voice overrides, and separate spoken-text edits.
 - Chapter audio, whole-volume audiobook export, optional MP4 reading videos, and YouTube chapter timestamps.
 - Project import/export with a preview, conflict choices, automatic import backups, and Undo.
+
+## Screenshots
+
+Screenshots use an invented demo project; no owner manuscripts, voices or personal data are shown.
+
+![The volume library](docs/screenshots/volumes.png)
+
+| Characters and volumes | Narrator voice |
+| --- | --- |
+| ![Quick view with volume membership and reading voices](docs/screenshots/characters.png) | ![Narrator voice selection](docs/screenshots/narrator.png) |
+
+![Project import and export](docs/screenshots/project.png)
 
 ## Install
 
@@ -73,7 +107,7 @@ The ordered **Text → Audio → Video** workflow checks the selected batch befo
 
 ## Characters and reading voices
 
-**Quick view** provides search, status filters, category assignment, reading-voice selection and quick details. Changes remain a draft until you preview and apply them. **Voice studio** contains the detailed reference, audition and voice-creation tools.
+**Quick view** provides search, volume and status filters, category assignment, volume membership, reading-voice selection and quick details. Changes remain a draft until you preview and apply them. **Voice studio** contains the detailed reference, audition and voice-creation tools.
 
 Create and reorder categories, edit their descriptions, and move characters individually or in a batch. Drag handles and menu actions provide the same organizing operations. Each category can default to own voices, the narrator, or a shared character reference. Existing fixed voices are preserved as explicit own-voice choices during the first registry migration.
 
@@ -87,7 +121,7 @@ Another character's voice means that character's own reference; voice rules do n
 
 ### New and provisional speakers
 
-New speakers discovered during analysis are provisional and scoped to their volume. Gemma can suggest a category for a supported identity. Review the passages, correct the details, approve the character, or merge a duplicate into an established identity. Ambiguous assignments remain **Unassigned**.
+New speakers discovered during analysis are provisional and recorded with the volume where they speak; a known identity is reused rather than duplicated. Gemma can suggest a category for a supported identity. Review the passages, correct the details, approve the character, or merge a duplicate into an established identity. Ambiguous assignments remain **Unassigned**.
 
 **Allow provisional characters to use their assigned reading voice** is off by default. Enabling it permits supported provisional identities to use their assigned voice; it does not bypass unresolved speaker assignments or identities marked **Needs review**.
 
@@ -147,7 +181,7 @@ There is one rolling release, **current**, with stable filenames. Its assets are
 
 ## Testing and limitations
 
-This is a personal project, tested on one Windows computer with an RTX 4080 Laptop, 12 GB. The current checks passed **309 Python tests** (212 application and 97 distribution tests) and **35 Node tests**, plus targeted browser checks, public-content auditing and package integrity verification.
+This is a personal project, tested on one Windows computer with an RTX 4080 Laptop, 12 GB. The current checks passed **330 Python tests** (233 application and 97 distribution tests) and **48 Node tests**, plus targeted browser checks, public-content auditing and package integrity verification.
 
 Those checks do not guarantee operation on every computer. Physical RTX 20/30/50 hardware, Compact on an 8 GB card, clean-Windows installation, and the missing-WebView2 installation path remain unverified. Native desktop lifecycle tests use a fake backend for several interruption scenarios.
 

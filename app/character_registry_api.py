@@ -54,4 +54,20 @@ def create_router(worker):
             transact(result['writes'])
             return registry.snapshot()
 
+    @router.post('/contexts')
+    def contexts(data: dict = Body(...)):
+        with worker.idle_guard():
+            return registry.context_edit(data)
+
+    @router.put('/scene-context')
+    def scene_context(data: dict = Body(...)):
+        import project
+        chapter = project.get_chapter(data['volume'], data['stem'])
+        expected = project.text_hash(chapter.text())
+        if data.get('source_hash') != expected:
+            raise ValueError('The chapter text changed. Reload the chapter before setting its context.')
+        with worker.idle_guard():
+            return registry.bind_scene(data['volume'], data['stem'], int(data['scene']),
+                                       data.get('context'), expected)
+
     return router

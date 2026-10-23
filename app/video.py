@@ -174,17 +174,21 @@ def _audio_hash(path, size, modified, changed, inode):
     return digest.digest()
 
 
-def cache_key(audio, script, meta, settings, *, volume, title):
+def cache_key(audio, script, meta, settings, *, volume, title, display=None):
     audio = Path(audio).resolve()
     stat = audio.stat()
     digest = hashlib.sha256(_audio_hash(str(audio), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
-    digest.update(json.dumps([RENDER_VERSION, script, meta, settings.render_options(), volume, title],
+    stable_script = {key: value for key, value in script.items() if key != 'attribution'} if isinstance(script, dict) else script
+    digest.update(json.dumps([RENDER_VERSION, stable_script, meta, settings.render_options(), volume, title],
                              sort_keys=True, ensure_ascii=False).encode('utf-8'))
     from character_registry import labels
     used = {row[0] for row in script.get('rows', [])}
     video_labels = {name:label for name,label in labels().items() if name in used}
     if video_labels:
         digest.update(json.dumps(video_labels, sort_keys=True, ensure_ascii=False).encode('utf-8'))
+    if display:
+        digest.update(json.dumps({str(line):label for line, label in display.items()},
+                                 sort_keys=True, ensure_ascii=False).encode('utf-8'))
     return digest.hexdigest()
 
 
@@ -225,9 +229,10 @@ def ellipsize(text, font, width):
 
 class Renderer:
     """A readable chapter canvas with contextual previews and an expanding active row."""
-    def __init__(self, timeline, volume, title, settings=VideoSettings()):
+    def __init__(self, timeline, volume, title, settings=VideoSettings(), display=None):
         self.timeline, self.settings = timeline, settings
         self.volume, self.title = volume, title
+        self.display = display or {}
         self.scale = settings.width / 1920
         fonts = Path('C:/Windows/Fonts')
         self.text_font = ImageFont.truetype(str(fonts / 'segoeui.ttf'), 40)
@@ -244,7 +249,8 @@ class Renderer:
         self.lines = [wrap_text(entry.text, self.text_font, self.text_width) for entry in self.entries]
         from character_registry import labels
         display = labels()
-        self.names = [wrap_text(display.get(entry.role, entry.role), self.name_font, 270) for entry in self.entries]
+        self.names = [wrap_text(self.display.get(entry.line, display.get(entry.role, entry.role)),
+                                self.name_font, 270) for entry in self.entries]
         name_heights = [20 + (len(lines) - 1) * 34 + max(self.name_font.getbbox(line)[3] for line in lines) + 10
                         for lines in self.names]
         self.active_heights = [max(116, name_height, min(260, len(lines) * self.line_height + 44))
