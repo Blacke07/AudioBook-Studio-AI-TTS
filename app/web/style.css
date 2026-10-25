@@ -444,3 +444,22 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 .registry-action-list.row-menu { position:fixed; right:auto; top:auto; z-index:60; width:max-content; min-width:220px; max-width:min(320px, calc(100vw - 16px)); max-height:min(60vh, 420px); overflow:auto; }
 .registry-action-list.row-menu .btn { width:100%; white-space:nowrap; }
 .modal:has(input[name="label"]) > .row.end { flex-wrap:wrap; }
+
+/* chapter editor: sticky menu, "go to next" prompt and the review queue beside the text */
+.page-head.sticky { position:sticky; top:0; z-index:25; margin:0 -12px 16px; padding:12px 12px 10px; background:var(--bg); border-bottom:1px solid var(--line); }
+#pin-head[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+.next-prompt { position:sticky; bottom:16px; z-index:30; display:flex; align-items:center; flex-wrap:wrap; gap:10px 12px; width:fit-content; max-width:100%; margin-top:16px; padding:10px 14px; background:var(--surface); border:1px solid var(--accent); border-radius:12px; box-shadow:var(--shadow); }
+.next-prompt.resolved { border-color:var(--ok); color:var(--ok); font-weight:600; }
+.next-prompt .icon { width:18px; height:18px; vertical-align:-4px; }
+.review-queue { display:none; }
+.review-queue h3 { display:flex; align-items:center; gap:8px; margin:0 0 10px; font-size:1rem; }
+.review-queue ol { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.queue-item { display:flex; align-items:center; gap:8px; width:100%; padding:6px 8px; border:0; border-radius:8px; background:transparent; color:var(--ink); font:inherit; font-size:.88rem; text-align:left; cursor:pointer; }
+.queue-item:hover, .queue-item:focus-visible { background:var(--surface-2); }
+.queue-item .chip { flex:none; }
+.queue-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.queue-done { display:flex; align-items:center; gap:8px; margin:0; color:var(--ok); font-weight:600; }
+.queue-done .icon { width:18px; height:18px; }
+@media (min-width:1780px) {
+  .review-queue { display:block; position:fixed; top:24px; right:24px; width:300px; max-height:calc(100vh - 48px); overflow:auto; padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:14px; }
+}

@@ -82,6 +82,16 @@ async def own_page_only(request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def revalidate_page_files(request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        # The page files change with updates. Without this, the window may keep showing a cached older copy;
+        # the ETag keeps the check cheap.
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 def _url(path):
     return "/api/audio?path=" + quote(project.media_token(path))
 

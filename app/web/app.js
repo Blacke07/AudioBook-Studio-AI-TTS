@@ -29,6 +29,7 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
   lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   back: '<path d="m14 6-6 6 6 6"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
 };
 const icon = (name) => `<svg class="icon" viewBox="0 0 24 24">${ICONS[name]}</svg>`;
 
@@ -375,7 +376,22 @@ async function viewVolume(name) {
 
 /* ---------- chapter editor ---------- */
 let lineFilter = "all";
-async function viewChapter(volume, stem) {
+/* The next unassigned line after `from`, or the first one when none follows; null once all are resolved. */
+function nextToResolve(lines, from) {
+  const open = lines.flatMap((line, at) => (line.speaker === UNASSIGNED ? [at] : []));
+  return open.find((at) => at > from) ?? open[0] ?? null;
+}
+/* Lines still waiting for the author, in reading order, with why. */
+function reviewQueue(lines) {
+  const why = (line) => line.speaker === UNASSIGNED ? "Unassigned" : line.basis === "context" ? "Context" : line.flagged ? "Pacing" : "";
+  return lines.flatMap((line, index) => (why(line) ? [{ index, why: why(line), text: line.text }] : []));
+}
+const stickyHeader = {
+  get() { try { return localStorage.getItem("chapterMenuSticky") === "1"; } catch { return false; } },
+  set(on) { try { localStorage.setItem("chapterMenuSticky", on ? "1" : "0"); } catch { /* the choice just is not remembered */ } },
+};
+/* `after.prompt`: index of the line just resolved; `after.focus`: a line to bring into view. */
+async function viewChapter(volume, stem, after = {}) {
   const data = await api(`/api/chapter?volume=${encodeURIComponent(volume)}&stem=${encodeURIComponent(stem)}`);
   const c = data.chapter, lines = data.lines;
   const unclear = lines.filter((l) => l.speaker === UNASSIGNED).length;
@@ -391,15 +407,30 @@ async function viewChapter(volume, stem) {
   const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) =>
     lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged || line.basis === "context")));
   const kind = (line) => line.speaker === PAUSE ? "pause" : HEADING.test(line.text) ? "heading" : line.speaker === NARRATOR ? "narration" : "speech";
+  const pinned = stickyHeader.get();
+  const queue = reviewQueue(lines);
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+  const followUp = contextual ? ` · ${plural(contextual, "context line", "context lines")} to review` : "";
+  const prompt = after.prompt == null || !lines.length ? "" : unclear
+    ? `<div class="next-prompt" id="next-prompt" role="status"><span>${plural(unclear, "line still needs", "lines still need")} a speaker. Go to the next one?</span>
+        <button class="btn primary small" data-next-go>Go to next</button><button class="btn ghost small" data-next-close>Not now</button></div>`
+    : `<div class="next-prompt resolved" id="next-prompt" role="status"><span>${icon("check")} All speakers resolved${followUp}</span>
+        <button class="btn ghost small" data-next-close>Close</button></div>`;
+  const side = !lines.length ? "" : `<aside class="review-queue" aria-label="Lines to review">
+      <h3>To review ${queue.length ? `<span class="chip warn">${queue.length}</span>` : ""}</h3>
+      ${queue.length ? `<ol>${queue.slice(0, 300).map((item) => `<li><button type="button" class="queue-item" data-queue-go="${item.index}"><span class="chip ${item.why === "Unassigned" ? "warn" : ""}">${item.why}</span><span class="queue-text">${esc(item.text)}</span></button></li>`).join("")}</ol>`
+        : `<p class="queue-done">${icon("check")} Resolved</p>`}
+    </aside>`;
   view.innerHTML = `${backButton(parentRoute())}
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
-    <div class="page-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
+    <div class="page-head ${pinned ? "sticky" : ""}" id="chapter-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
       <p>${chip(c.state, c.label)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
       ${videoChip(c)} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
       <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${!data.manual_draft ? "Analyze again" : "Analyze Text"}</button>
         <button class="btn primary" id="render" ${c.can_generate ? "" : 'disabled title="Finish text analysis and resolve speakers first."'}>${icon("play")} Generate chapter</button>
         <button class="btn" id="create-video" ${["generated", "exported"].includes(c.state) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create video</button>
-        <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button></div></div>
+        <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button>
+        <button class="btn ghost" id="pin-head" aria-pressed="${pinned}" title="Keep this menu visible while you scroll">${icon("pin")} Sticky menu</button></div></div>
     ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}<button class="btn" id="diagnose-chapter">Diagnose / repair</button></div>` : ""}
     ${data.manual_draft || c.analysis_problem ? `<div class="banner">${icon("book")}<div><b>Manual speaker editor</b><p>The text is available even if AI analysis fails. Choose a speaker beside each line or split a line; changes save without using Gemma. Your original chapter file is never edited.</p><button class="btn" id="save-manual">${data.manual_draft ? "Use manual assignments" : "Keep these assignments"}</button></div></div>` : ""}
     ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}
@@ -428,7 +459,7 @@ async function viewChapter(volume, stem) {
               ${line.start != null ? `<button class="btn ghost icon-only" data-variant="${index}" title="Generate another take of this line">${icon("redo")}</button>` : ""}
             </div></div>`).join("")}</div>`
         : `<div class="empty"><p>This chapter has not been analyzed yet.</p><button class="btn primary" id="first-analyze">${icon("wand")} Analyze dialogue</button></div>`}
-    </div>`;
+    </div>${prompt}${side}`;
 
   const runChapter = (steps, button) => guard(async () => {
     await api("/api/run", { method: "POST", body: { volume, stems: [stem], steps } });
@@ -453,11 +484,11 @@ async function viewChapter(volume, stem) {
   $$("[data-scene-context]").forEach((button) => button.onclick = (event) =>
     guard(() => editSceneContext(+button.dataset.sceneContext, volume, stem, data), event.currentTarget));
 
-  const save = async (rows, message) => {
+  const save = async (rows, message, next = {}) => {
     const result = await api("/api/chapter/rows", { method: "PUT", body: { volume, stem, rows, source_hash:data.source_hash } });
     if (result.added?.length) toast(`Added to the glossary: ${result.added.join(", ")}. Review their gender in Characters.`);
     else if (message) toast(message);
-    viewChapter(volume, stem);
+    viewChapter(volume, stem, next);
   };
   VoiceRules.bindChapter(volume, stem, data);
   SpokenText.bind(volume, stem, data);
@@ -469,9 +500,32 @@ async function viewChapter(volume, stem) {
     openMenu(button, data.speakers, lines[index].speaker, (speaker) => guard(() => {
       const next = rows();
       next[index][0] = speaker;
-      return save(next, `${speaker} · saved`);
+      return save(next, `${speaker} · saved`, lines[index].speaker === UNASSIGNED ? { prompt: index } : {});
     }));
   });
+  const goTo = (index) => {
+    const target = $(`[data-who="${index}"]`);
+    if (!target) { lineFilter = "all"; viewChapter(volume, stem, { focus: index }); return; }
+    const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.closest(".line").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+    target.focus({ preventScroll: true, focusVisible: true });
+  };
+  $$("[data-queue-go]").forEach((button) => button.onclick = () => goTo(+button.dataset.queueGo));
+  const bar = $("#next-prompt");
+  if (bar) {
+    $("[data-next-close]", bar).onclick = () => bar.remove();
+    bar.onkeydown = (event) => { if (event.key === "Escape") bar.remove(); };
+    const go = $("[data-next-go]", bar);
+    if (go) go.onclick = () => { const to = nextToResolve(lines, after.prompt); bar.remove(); if (to !== null) goTo(to); };
+    (go || $("[data-next-close]", bar)).focus({ preventScroll: true, focusVisible: true });
+  }
+  if (after.focus != null) goTo(after.focus);
+  $("#pin-head").onclick = (event) => {
+    const on = !stickyHeader.get();
+    stickyHeader.set(on);
+    $("#chapter-head").classList.toggle("sticky", on);
+    event.currentTarget.setAttribute("aria-pressed", String(on));
+  };
   $$("[data-split]").forEach((button) => button.onclick = async () => {
     const index = +button.dataset.split;
     const form = await modal("Split line", `<p class="muted">${esc(lines[index].text)}</p>
