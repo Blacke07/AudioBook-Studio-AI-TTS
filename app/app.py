@@ -121,7 +121,8 @@ def _chapter_info(chapter, settings, rows):
     try:
         info["video"] = video_jobs.video_status(chapter, settings, state in ("generated", "exported"))
     except (ValueError, OSError) as error:
-        info["video"] = {"state": "outdated", "label": "Video outdated", "error": str(error)}
+        info["video"] = {"state": "outdated", "label": "Video outdated", "error": str(error),
+                         "reason": "The video status could not be checked."}
     if "file" in info["video"]:
         info["video"]["url"] = _url(info["video"].pop("file"))
     return info

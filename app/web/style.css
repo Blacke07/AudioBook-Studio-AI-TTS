@@ -463,3 +463,8 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 @media (min-width:1780px) {
   .review-queue { display:block; position:fixed; top:24px; right:24px; width:300px; max-height:calc(100vh - 48px); overflow:auto; padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:14px; }
 }
+
+/* chapter table: audio, video and listen buttons; chips that explain themselves on hover */
+.chip.has-reason { cursor:help; }
+.tools-row { display:flex; justify-content:flex-end; gap:2px; }
+td.row-tools { white-space:nowrap; }

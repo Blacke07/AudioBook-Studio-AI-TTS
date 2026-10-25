@@ -104,8 +104,9 @@ const STATE_CLASS = { new: "", modified: "warn", needs_review: "warn", analyzed:
 const STATE_COLOR = { new: "var(--line)", modified: "var(--warn)", needs_review: "var(--warn)", analyzed: "var(--info)",
   partial: "var(--info)", outdated: "var(--warn)", generated: "var(--ok)", exported: "var(--ok)", error: "var(--bad)" };
 const STATE_LABEL = { new: "Not analyzed", modified: "Text changed", needs_review: "Needs review", analyzed: "Ready to generate",
-  partial: "Partly generated", outdated: "Outdated", generated: "Generated", exported: "Exported", error: "Error" };
-const chip = (state, label) => `<span class="chip ${STATE_CLASS[state] || ""}">${esc(label || STATE_LABEL[state])}</span>`;
+  partial: "Partly generated", outdated: "Audio outdated", generated: "Generated", exported: "Exported", error: "Error" };
+const chip = (state, label, why) => `<span class="chip ${STATE_CLASS[state] || ""}${why ? " has-reason" : ""}"${why ? ` title="${esc(why)}"` : ""}>${esc(label || STATE_LABEL[state])}</span>`;
+const audioChip = (c) => chip(c.state, c.label, c.state === "outdated" ? c.outdated_reason : "");
 
 /* ---------- worker panel ---------- */
 let workerState = { running: false, log: [] };
@@ -242,7 +243,7 @@ async function addVolumeDialog() {
 
 let volumeFilter = "all";
 let selected = new Set();
-const videoChip = (c) => `<span class="chip ${c.video.state === "ready" ? "ok" : c.video.state === "outdated" ? "warn" : ""}">${esc(c.video.label)}</span>`;
+const videoChip = (c) => `<span class="chip ${c.video.state === "ready" ? "ok" : c.video.state === "outdated" ? "warn has-reason" : ""}"${c.video.state === "outdated" && c.video.reason ? ` title="${esc(c.video.reason)}"` : ""}>${esc(c.video.label)}</span>`;
 
 /* The discreet back control follows the logical parent, not history.back():
    a chapter returns to its volume, a volume returns to the volumes list, other pages have none. */
@@ -259,6 +260,19 @@ function parentRoute(hash = location.hash || "#/") {
 const backButton = (parent) => parent
   ? `<a class="back" id="back" href="${esc(parent.href)}" aria-label="${esc(parent.label)}" title="${esc(parent.label)}">${icon("back")}</a>`
   : "";
+/* Per-chapter actions: make or remake the audio, make or remake the video, listen. */
+function rowTools(c) {
+  const generated = ["generated", "exported"].includes(c.state);
+  const audioTitle = !c.can_generate ? "Finish text analysis and resolve speakers first."
+    : !c.audio ? "Generate audio" : c.state === "outdated" ? "Regenerate the outdated audio" : "Regenerate audio";
+  const videoTitle = !generated ? "Generate current audio first"
+    : c.video.state === "none" ? "Create video" : c.video.state === "outdated" ? "Regenerate the outdated video" : "Regenerate video";
+  return `<div class="tools-row">
+    <button class="btn ghost icon-only" data-make="audio" title="${audioTitle}" aria-label="${audioTitle}" ${c.can_generate ? "" : "disabled"}>${icon("sound")}</button>
+    <button class="btn ghost icon-only" data-make="video" title="${videoTitle}" aria-label="${videoTitle}" ${generated ? "" : "disabled"}>${icon("video")}</button>
+    <button class="btn ghost icon-only" data-play="${c.audio ? esc(c.audio) : ""}" title="${c.audio ? "Listen" : "No audio yet"}" aria-label="${c.audio ? "Listen" : "No audio yet"}" ${c.audio ? "" : "disabled"}>${icon("play")}</button>
+  </div>`;
+}
 async function viewVolume(name) {
   const data = await api(`/api/volumes/${encodeURIComponent(name)}`);
   const chapters = data.chapters;
@@ -305,11 +319,11 @@ async function viewVolume(name) {
         <td class="num">${c.number ?? ""}</td>
         <td>${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.analysis_problem ? "Speaker analysis needs repair." : c.error)}</div><button class="btn" data-diagnose="${esc(c.stem)}">Diagnose / repair</button>` : ""}</td>
         <td class="dur">${c.seconds ? duration(c.seconds) : `~${duration(c.estimated_seconds)}`}</td>
-        <td>${chip(c.state, c.label)}${c.state === "partial" ? `<span class="bar mini-bar"><i style="width:${c.progress * 100}%"></i></span>` : ""}
+        <td>${audioChip(c)}${c.state === "partial" ? `<span class="bar mini-bar"><i style="width:${c.progress * 100}%"></i></span>` : ""}
           ${c.unclear ? `<span class="chip warn" title="unassigned dialogue">${c.unclear} unassigned</span>` : ""}
           ${c.flagged ? `<span class="chip" title="passages with unusual pacing">${icon("flag")} ${c.flagged}</span>` : ""}
           <div style="margin-top:4px">${videoChip(c)}</div>${c.video.error ? `<div class="small" style="color:var(--bad)">Video: ${esc(c.video.error)}</div>` : ""}</td>
-        <td>${c.audio ? `<button class="btn ghost icon-only" data-play="${esc(c.audio)}" title="Listen">${icon("play")}</button>` : ""}</td>
+        <td class="row-tools">${rowTools(c)}</td>
       </tr>`).join("")}</tbody></table>
       ${visible.length ? "" : `<div class="empty">No chapters in this category.</div>`}
     </div>
@@ -325,6 +339,11 @@ async function viewVolume(name) {
     await api("/api/run", { method: "POST", body: { volume: name, stems, steps, force,
       automatic: steps.join(",") === "analyze,render,export" } });
     toast("Job queued. Follow progress in the lower-left panel.");
+    pollNow();
+  }, button);
+  const runOne = (stem, steps, button) => guard(async () => {
+    await api("/api/run", { method: "POST", body: { volume: name, stems: [stem], steps } });
+    toast(steps[0] === "video" ? "Video queued. Follow progress in the lower-left panel." : "Audio queued. Follow progress in the lower-left panel.");
     pollNow();
   }, button);
   ChapterWorkflow.bind();
@@ -367,8 +386,10 @@ async function viewVolume(name) {
       if (!event.target.closest("input, label")) $("[data-select]", cell).click();
       return;
     }
+    const make = event.target.closest("[data-make]");
+    if (make) { if (!make.disabled) runOne(row.dataset.stem, make.dataset.make === "audio" ? ["render", "export"] : ["video"], make); return; }
     const play = event.target.closest("[data-play]");
-    if (play) { const player = $("#volume-player"); player.classList.remove("hidden"); player.src = play.dataset.play; player.play(); return; }
+    if (play) { if (!play.disabled) { const player = $("#volume-player"); player.classList.remove("hidden"); player.src = play.dataset.play; player.play(); } return; }
     location.hash = `#/chapter/${encodeURIComponent(name)}/${encodeURIComponent(row.dataset.stem)}`;
   });
   scheduleRefresh(() => { if ((!$("#volume-player") || $("#volume-player").paused) && !ChapterWorkflow.isOpen()) viewVolume(name); });
@@ -424,7 +445,7 @@ async function viewChapter(volume, stem, after = {}) {
   view.innerHTML = `${backButton(parentRoute())}
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
     <div class="page-head ${pinned ? "sticky" : ""}" id="chapter-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
-      <p>${chip(c.state, c.label)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
+      <p>${audioChip(c)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
       ${videoChip(c)} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
       <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${!data.manual_draft ? "Analyze again" : "Analyze Text"}</button>
         <button class="btn primary" id="render" ${c.can_generate ? "" : 'disabled title="Finish text analysis and resolve speakers first."'}>${icon("play")} Generate chapter</button>

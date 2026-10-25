@@ -30,7 +30,7 @@ function page(chapters = [chapter('one', 'generated'), chapter('two', 'new')]) {
       rows = boxes.map(box => ({dataset:{stem:box.dataset.select}, box}));
     }},
     $: element, $$: selector => selector === '[data-select]' ? boxes : selector === 'tr.clickable' ? rows : [],
-    location:{hash:'#/volume/Demo'}, icon:()=>'', duration:String, chip:()=>'',
+    location:{hash:'#/volume/Demo'}, icon:()=>'', duration:String, chip:()=>'', audioChip:()=>'',
     STATE_COLOR:{}, STATE_LABEL:{}, STATE_CLASS:{},
     VoiceRules:{mount:async()=>{}},
     scheduleRefresh:()=>{}, toast:()=>{}, pollNow:()=>{}, guard:action=>action(), modal:async()=>true,

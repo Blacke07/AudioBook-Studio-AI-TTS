@@ -87,7 +87,10 @@ class ProjectTests(unittest.TestCase):
 
         script["rows"][-1][3] = 1  # another take of one line: only that passage is generated again
         chapter.save_script(script)
-        self.assertEqual(pipeline.status(chapter, self.settings, glossary.load())[0], "outdated")
+        state, details = pipeline.status(chapter, self.settings, glossary.load())
+        self.assertEqual(state, "outdated")
+        self.assertEqual(pipeline.STATES["outdated"], "Audio outdated")
+        self.assertRegex(details["outdated_reason"], r"^1 of \d+ passages no longer match the generated audio")
         before = len(fake_generate.calls)
         conversion.render_chapter(chapter, self.settings)
         self.assertEqual(len(fake_generate.calls) - before, 1)

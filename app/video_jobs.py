@@ -147,9 +147,19 @@ def video_status(chapter, settings, audio_current):
     if audio_current and record and chapter.audio_file.is_file() and chapter.script_file.is_file():
         ready = (record.get('key') == fingerprint(chapter, settings)
                  and record.get('bytes') == target.stat().st_size)
+    reason = None
+    if not ready:
+        if not audio_current:
+            reason = 'The chapter audio is outdated, so this video no longer matches the text and the audio.'
+        elif not (record and chapter.audio_file.is_file() and chapter.script_file.is_file()):
+            reason = 'There is no record of what this video was made from.'
+        elif record.get('bytes') != target.stat().st_size:
+            reason = 'The video file changed after it was created.'
+        else:
+            reason = 'The audio, the speaker labels or the video settings changed after this video was created.'
     return {**result, 'state': 'ready' if ready else 'outdated',
             'label': 'Video ready' if ready else 'Video outdated', 'file': str(target),
-            'duration': record.get('duration')}
+            'duration': record.get('duration'), **({'reason': reason} if reason else {})}
 
 
 def measurement(settings=None):

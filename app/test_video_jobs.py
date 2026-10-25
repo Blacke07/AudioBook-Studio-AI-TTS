@@ -124,7 +124,12 @@ class VideoJobTests(unittest.TestCase):
         chapter = self.chapters[0]
         self.record(chapter)
         self.assertEqual(jobs.video_status(chapter, self.settings, True)['state'], 'ready')
-        self.assertEqual(jobs.video_status(chapter, self.settings, False)['state'], 'outdated')
+        stale = jobs.video_status(chapter, self.settings, False)
+        self.assertEqual(stale['state'], 'outdated')
+        self.assertIn('audio is outdated', stale['reason'])
+        self.assertNotIn('reason', jobs.video_status(chapter, self.settings, True))
+        changed = jobs.video_status(chapter, {**self.settings, 'video': {**self.settings['video'], 'footer': 'Demo'}}, True)
+        self.assertIn('settings changed', changed['reason'])
         for field, value in [('width', 1280), ('before', 0), ('after', 4), ('footer', 'Demo'),
                              ('show_omitted', False), ('progress_bar', False)]:
             options = {**self.settings['video'], field: value}

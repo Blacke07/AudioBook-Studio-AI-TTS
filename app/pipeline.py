@@ -26,7 +26,7 @@ STATES = {
     "needs_review": "Needs review",
     "analyzed": "Ready to generate",
     "partial": "Partly generated",
-    "outdated": "Outdated",
+    "outdated": "Audio outdated",
     "generated": "Generated",
     "exported": "Exported",
     "error": "Error",
@@ -143,6 +143,13 @@ def status(chapter, settings, glossary_rows):
         return "error", details
     if meta:
         details["changed"] = sum(1 for key in keys if key not in set(meta["keys"]))
+        if details["changed"]:
+            details["outdated_reason"] = (f'{details["changed"]} of {len(keys)} passages no longer match the generated audio: '
+                                          'a speaker, reading voice, spoken text or setting was edited since it was made.')
+        elif not identity_matches:
+            details["outdated_reason"] = "A line now has a different speaker than in the generated audio."
+        else:
+            details["outdated_reason"] = "Passages were removed or reordered since the audio was generated."
         return "outdated", details
     return ("partial" if done else "analyzed"), details
 

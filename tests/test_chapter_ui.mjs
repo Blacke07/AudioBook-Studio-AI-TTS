@@ -50,3 +50,14 @@ test('the review queue only takes the free space on wide windows', () => {
   assert.match(style, /\.review-queue \{ display:none; \}/);
   assert.match(style, /@media \(min-width:1780px\) \{\s*\.review-queue \{ display:block; position:fixed;/);
 });
+
+test('the chapter table has audio, video and listen buttons and chips that explain themselves', () => {
+  assert.match(source, /outdated: "Audio outdated"/);
+  assert.match(source, /c\.state === "outdated" \? c\.outdated_reason : ""/);
+  assert.match(source, /warn has-reason/);
+  for (const part of ['data-make="audio"', 'data-make="video"', 'data-play="${c.audio']) {
+    assert.ok(source.includes(part), part);
+  }
+  assert.match(source, /\["render", "export"\] : \["video"\]/);
+  assert.match(style, /\.chip\.has-reason \{ cursor:help; \}/);
+});
