@@ -84,6 +84,71 @@ class ProjectTransferTests(unittest.TestCase):
         self.assertIn('volumes.json', writes)
         self.assertEqual(package.json_data(writes['volumes.json'])[0]['id'], original)
 
+    def linked_package(self):
+        """Repack with Ada linked to a context, a scoped alias and a scoped label; returns the volume ID."""
+        import character_registry as registry
+        volume = project.volume_id(project.get_volume('The Lantern House'))
+        created = registry.context_edit(dict(action='create', name='Hall', volume=volume,
+                                             revision=registry.snapshot()['revision']))
+        hall = created['document']['organization']['contexts'][0]['id']
+        state = registry.snapshot()
+        state['document']['characters'][0]['aliases'] = ['the keeper']
+        meta = state['document']['organization']['characters']['Ada']
+        meta['volumes'], meta['contexts'] = [volume], [hall]
+        meta['alias_scopes'] = {'the keeper': dict(volumes=[volume], contexts=[hall])}
+        meta['labels'] = [dict(label='The keeper', contexts=[hall])]
+        result = registry.plan(state)
+        registry.apply(result['request'], result['plan_id'])
+        package.write_package(self.path, package.collect(package.PARTS))
+        return volume
+
+    def fresh(self):
+        self.empty()
+        glossary.GLOSSARY_FILE.unlink()
+
+    def test_context_links_import_into_an_empty_project(self):
+        import character_registry as registry
+        volume = self.linked_package()
+        self.fresh()
+        incoming, choices, state, report = self.preview()
+        transfer.apply(incoming, choices, state, report)
+        meta = registry.organization()['characters']['Ada']
+        context = registry.organization()['contexts'][0]
+        self.assertEqual((context['name'], context['volume']), ('Hall', volume))
+        self.assertEqual((meta['volumes'], meta['contexts']), ([volume], [context['id']]))
+        self.assertEqual(meta['alias_scopes']['the keeper'], dict(volumes=[volume], contexts=[context['id']]))
+        self.assertEqual(registry.resolved_label('Ada', 'The Lantern House', [context['id']]), 'The keeper')
+        self.assertEqual(registry.resolved_label('Ada', 'The Lantern House', []), 'Ada')
+        self.assertNotIn('the keeper', registry.alias_map('The Lantern House', []))
+
+    def test_import_matches_volumes_by_name_not_by_id(self):
+        import character_registry as registry
+        self.linked_package()
+        self.fresh()
+        project.add_volume('The Lantern House', self.source)
+        volumes = project.volumes()
+        volumes[0]['id'] = 'volume-local'
+        project.write_json(project.VOLUMES_FILE, volumes)
+        incoming, choices, state, report = self.preview({'parts': ['cast']})
+        transfer.apply(incoming, choices, state, report)
+        meta = registry.organization()['characters']['Ada']
+        self.assertEqual(meta['volumes'], ['volume-local'])
+        self.assertEqual(registry.organization()['contexts'][0]['volume'], 'volume-local')
+        self.assertEqual(meta['alias_scopes']['the keeper']['volumes'], ['volume-local'])
+
+    def test_scoped_alias_is_not_imported_when_its_volume_is_missing(self):
+        import character_registry as registry
+        self.linked_package()
+        self.fresh()
+        incoming, choices, state, report = self.preview({'parts': ['cast']})
+        character = next(item for item in report['items'] if item['kind'] == 'character')
+        self.assertIn('the keeper', character['reason'])
+        transfer.apply(incoming, choices, state, report)
+        self.assertEqual(registry.organization()['contexts'], [])
+        self.assertNotIn('alias_scopes', registry.organization()['characters']['Ada'])
+        self.assertEqual(glossary.aliases_of(glossary.load()[0][1]), [])
+        self.assertNotIn('the keeper', registry.alias_map(None, []))
+
     def test_preview_is_read_only_and_roundtrip_undo_restores_exact_state(self):
         self.empty()
         before = transfer.capture()

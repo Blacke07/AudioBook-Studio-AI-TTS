@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import webbrowser
+from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -305,6 +306,23 @@ def _check_rows(item, rows=None, source_hash=None):
     return script
 
 
+def _carry_attribution(original, rows):
+    """Analysis confidence notes by new row index. A note stays only on a row whose speaker and text are
+    unchanged, so rows the author edited are settled while the others keep their review marks."""
+    notes = original.get("attribution") or {}
+    if not notes:
+        return {}
+    before = [(row[0], row[1]) for row in original["rows"]]
+    after = [(row[0], row[1]) for row in rows]
+    kept = {}
+    for block in SequenceMatcher(None, before, after, autojunk=False).get_matching_blocks():
+        for offset in range(block.size):
+            note = notes.get(str(block.a + offset))
+            if note:
+                kept[str(block.b + offset)] = note
+    return kept
+
+
 def _save_rows(item, script, rows):
     clean = []
     for row in rows:
@@ -324,7 +342,11 @@ def _save_rows(item, script, rows):
     script["rows"] = clean
     script = voice_rules.reconcile(original_script, script)
     script = spoken_text.reconcile(original_script, script)
-    script.pop("attribution", None)  # manual choices replace the analysis confidence notes
+    notes = _carry_attribution(original_script, clean)  # a line the author changed or split is settled
+    if notes:
+        script["attribution"] = notes
+    else:
+        script.pop("attribution", None)
     script["speakers"] = list(dict.fromkeys(row[0] for row in clean if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
     item.save_script(script)
     if item.error_file.exists() and item.error_file.read_text(encoding="utf-8").startswith("analysis:"):

@@ -124,6 +124,43 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(self.chapter.script()['rows'][0][0],'Morgan')
         self.assertEqual({r[0] for r in glossary.load()},{'Morgan'})
 
+    def test_merge_recognises_the_alias_wherever_either_identity_did(self):
+        volume=project.volume_id(project.get_volume('Lantern'))
+        created=registry.context_edit(dict(action='create',name='Hall',volume=volume,revision=self.draft()['revision']))
+        hall=created['document']['organization']['contexts'][0]['id']
+        state=self.draft();document=state['document']
+        for entry in document['characters']:
+            entry['aliases']=['the keeper','the porter'] if entry['name']=='Ada' else ['the keeper','the usher']
+        ada=document['organization']['characters']['Ada'];morgan=document['organization']['characters']['Morgan']
+        ada['volumes']=[volume]
+        morgan['volumes']=['volume-elsewhere']
+        ada['alias_scopes']={'the keeper':dict(volumes=[],contexts=[hall]),'the porter':dict(volumes=[volume],contexts=[])}
+        morgan['alias_scopes']={'the usher':dict(volumes=['volume-elsewhere'],contexts=[])}
+        self.save(state)
+        result=registry.merge_plan(dict(revision=self.draft()['revision'],source='Ada',target='Morgan'))
+        transfer.transact(result['writes'])
+        meta=registry.organization()['characters']['Morgan']
+        # Morgan's own unrestricted alias stays unrestricted; Ada's restricted one keeps its limit.
+        self.assertEqual(registry.alias_map('Lantern',[]).get('the keeper'),'Morgan')
+        self.assertEqual(registry.alias_map('Lantern',[]).get('the porter'),'Morgan')
+        self.assertNotIn('the porter',registry.alias_map('Other',[]))
+        self.assertEqual(meta['alias_scopes']['the usher'],dict(volumes=['volume-elsewhere'],contexts=[]))
+        self.assertNotIn('the keeper',meta['alias_scopes'])
+        # Morgan now speaks in Lantern, so the cast list shows Morgan there.
+        self.assertEqual(sorted(meta['volumes']),sorted([volume,'volume-elsewhere']))
+
+    def test_merge_does_not_narrow_when_the_source_alias_is_unrestricted(self):
+        volume=project.volume_id(project.get_volume('Lantern'))
+        state=self.draft();document=state['document']
+        for entry in document['characters']:
+            entry['aliases']=['the keeper']
+        document['organization']['characters']['Morgan']['alias_scopes']={'the keeper':dict(volumes=[volume],contexts=[])}
+        self.save(state)
+        result=registry.merge_plan(dict(revision=self.draft()['revision'],source='Ada',target='Morgan'))
+        transfer.transact(result['writes'])
+        self.assertNotIn('alias_scopes',registry.organization()['characters']['Morgan'])
+        self.assertEqual(registry.alias_map('Other',[]).get('the keeper'),'Morgan')
+
     def test_export_import_preserves_categories(self):
         state=self.draft();self.group(state);self.save(state)
         org=registry.organization()
@@ -194,6 +231,25 @@ class RegistryTests(unittest.TestCase):
         migrated=registry.document()['organization']['characters']['Ada']
         self.assertEqual(migrated['volumes'],[project.volume_id(project.get_volume('Lantern'))])
         self.assertNotIn('scope',migrated)
+        self.assertFalse(registry.migrate())
+
+    def test_migration_keeps_a_legacy_scoped_alias_inside_its_volume(self):
+        other=self.root/'other-chapters'; other.mkdir()
+        (other/'001 - Harbor.txt').write_text('— Hello, the keeper said.',encoding='utf-8')
+        project.add_volume('Harbor',other)
+        data=registry.snapshot()['document']
+        data['characters'][0]['aliases']=['the keeper']
+        data['organization']['characters']['Ada']['scope']='Lantern'
+        project.write_json(glossary.GLOSSARY_FILE,data)
+        self.assertTrue(registry.migrate())
+        lantern=project.volume_id(project.get_volume('Lantern'))
+        meta=registry.organization()['characters']['Ada']
+        self.assertEqual(meta['alias_scopes'],{'the keeper':dict(volumes=[lantern],contexts=[])})
+        self.assertEqual(registry.alias_map('Lantern')['the keeper'],'Ada')
+        self.assertNotIn('the keeper',registry.alias_map('Harbor'))
+        from pipeline import manual_script
+        rows=manual_script(project.chapters('Harbor')[0],glossary.load())['rows']
+        self.assertEqual(rows[0][0],'Unassigned')
         self.assertFalse(registry.migrate())
 
     def test_contexts_bind_scenes_and_stale_bindings_are_not_applied(self):
@@ -329,24 +385,64 @@ class RegistryTests(unittest.TestCase):
         split=registry.bind_scene('Lantern',self.chapter.stem,4,None,digest)['document']['organization']['contexts'][0]
         self.assertEqual([(item['first'],item['last']) for item in split['scenes']],[(3,3),(5,5)])
 
-    def test_deleting_a_context_removes_character_references(self):
+    def test_deleting_a_context_never_widens_a_scoped_rule(self):
         state=self.draft()
         volume=project.volume_id(project.get_volume('Lantern'))
         created=registry.context_edit(dict(action='create',name='Hall',volume=volume,revision=state['revision']))
-        context=created['document']['organization']['contexts'][0]['id']
+        hall=created['document']['organization']['contexts'][0]['id']
+        created=registry.context_edit(dict(action='create',name='Pier',volume=volume,revision=self.draft()['revision']))
+        pier=next(c['id'] for c in created['document']['organization']['contexts'] if c['name']=='Pier')
         state=self.draft()
         document=state['document']
-        document['organization']['characters']['Ada']['contexts']=[context]
-        document['characters'][0]['aliases']=['the keeper']
-        document['organization']['characters']['Ada']['alias_scopes']={'the keeper':dict(volumes=[],contexts=[context])}
-        document['organization']['characters']['Ada']['labels']=[dict(label='The keeper',contexts=[context])]
+        document['characters'][0]['aliases']=['the keeper','the lamplighter']
+        meta=document['organization']['characters']['Ada']
+        meta['contexts']=[hall]
+        meta['alias_scopes']={'the keeper':dict(volumes=[],contexts=[hall]),
+                              'the lamplighter':dict(volumes=[],contexts=[hall,pier])}
+        meta['labels']=[dict(label='The keeper',contexts=[hall]),dict(label='Lamplighter',contexts=[hall,pier])]
         self.save(state)
-        deleted=registry.context_edit(dict(action='delete',id=context,revision=self.draft()['revision']))
+        self.assertEqual(registry.alias_map('Lantern',[hall])['the keeper'],'Ada')
+        deleted=registry.context_edit(dict(action='delete',id=hall,revision=self.draft()['revision']))
         meta=deleted['document']['organization']['characters']['Ada']
-        self.assertEqual(deleted['document']['organization']['contexts'],[])
+        self.assertEqual([c['id'] for c in deleted['document']['organization']['contexts']],[pier])
         self.assertEqual(meta['contexts'],[])
-        self.assertEqual(meta['alias_scopes']['the keeper']['contexts'],[])
-        self.assertEqual(meta['labels'][0]['contexts'],[])
+        # A rule limited to the deleted context alone is removed; one shared with another keeps that limit.
+        self.assertEqual(meta['alias_scopes'],{'the lamplighter':dict(volumes=[],contexts=[pier])})
+        self.assertEqual(deleted['document']['characters'][0]['aliases'],['the lamplighter'])
+        self.assertEqual(meta['labels'],[dict(label='Lamplighter',contexts=[pier])])
+        for volume_name in ('Lantern',None):
+            self.assertNotIn('the keeper',registry.alias_map(volume_name,[]))
+            self.assertNotIn('the lamplighter',registry.alias_map(volume_name,[]))
+        self.assertEqual(registry.alias_map('Lantern',[pier])['the lamplighter'],'Ada')
+        self.assertEqual(registry.resolved_label('Ada','Lantern',[]),'Ada')
+        self.assertEqual(registry.resolved_label('Ada','Other',[]),'Ada')
+        self.assertEqual(registry.resolved_label('Ada','Lantern',[pier]),'Lamplighter')
+
+    def test_saving_one_line_keeps_the_review_marks_of_the_others(self):
+        import app as web
+        text='— Stop.\n\n— Wait there.\n\n— Come here now, please.\n'
+        (self.root/'chapters'/'001 - The Lamp.txt').write_text(text,encoding='utf-8')
+        chapter=project.chapters('Lantern')[0]
+        note=lambda: {'basis':'context','reason':'inferred'}
+        chapter.save_script({'source_hash':project.text_hash(chapter.text()),'report':'r',
+            'rows':[['Ada','— Stop.',False,0],['Morgan','— Wait there.',False,0],['Ada','— Come here now, please.',False,0]],
+            'attribution':{'0':note(),'1':note(),'2':note()}})
+        def basis():
+            return [(line['speaker'],line['basis']) for line in web.chapter('Lantern',chapter.stem)['lines']]
+        rows=[list(row) for row in chapter.script()['rows']]
+        rows[0][0]='Morgan'
+        web._save_rows(chapter,chapter.script(),rows)
+        self.assertEqual(sorted(chapter.script()['attribution']),['1','2'])
+        self.assertEqual(basis(),[('Morgan','explicit'),('Morgan','context'),('Ada','context')])
+        # A split moves the later rows down; their marks follow them, the split row is settled.
+        web.split_row({'volume':'Lantern','stem':chapter.stem,'index':1,'phrase':'there.',
+                       'speaker':'Morgan','source_hash':chapter.script()['source_hash']})
+        self.assertEqual(sorted(chapter.script()['attribution']),['3'])
+        self.assertEqual(chapter.script()['rows'][3][0],'Ada')
+        rows=[list(row) for row in chapter.script()['rows']]
+        rows[3][0]='Narrator'
+        web._save_rows(chapter,chapter.script(),rows)
+        self.assertNotIn('attribution',chapter.script())
 
     def test_context_edit_refuses_a_stale_revision(self):
         state=self.draft()

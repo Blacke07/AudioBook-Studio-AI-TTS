@@ -178,14 +178,23 @@ def migrate():
     if not isinstance(data, dict) or not isinstance(data.get('organization'), dict):
         return False
     by_name = {volume['name']: project.volume_id(volume) for volume in project.volumes()}
+    aliases = {entry['name']: entry.get('aliases', []) for entry in data.get('characters', [])
+               if isinstance(entry, dict)}
     changed = False
-    for item in data['organization'].get('characters', {}).values():
+    for name, item in data['organization'].get('characters', {}).items():
         if not isinstance(item, dict):
             continue
         scope = item.get('scope')
         if scope and 'volumes' not in item and scope in by_name:
             item['volumes'] = [by_name[scope]]
             item.pop('scope', None)
+            # The old scope kept this character, aliases included, out of other volumes. Membership alone
+            # does not restrict analysis, so the aliases keep that limit explicitly.
+            scopes = item.setdefault('alias_scopes', {})
+            for alias in aliases.get(name, []):
+                scopes.setdefault(alias, dict(volumes=[by_name[scope]], contexts=[]))
+            if not scopes:
+                del item['alias_scopes']
             changed = True
     if changed:
         data['organization'] = organization(data)
@@ -464,6 +473,73 @@ def import_document(text, draft):
     return dict(document=result, added=count)
 
 
+def adopt_contexts(incoming, volumes, existing):
+    """Package contexts that belong to a volume of this project. Returns (new contexts, package ID -> local ID).
+    A context already present for the same volume and name is reused and keeps its own scenes."""
+    ids = {item['id'] for item in existing}
+    titles = {item['name'].casefold() for item in existing}
+    places = {(item['volume'], item['name'].casefold()): item['id'] for item in existing}
+    added, mapping = [], {}
+    for context in incoming:
+        volume = volumes.get(context['volume'])
+        if volume is None:
+            continue
+        twin = places.get((volume, context['name'].casefold()))
+        if twin:
+            mapping[context['id']] = twin
+            continue
+        key, name = context['id'], context['name']
+        if key in ids:
+            key = 'import-' + hashlib.sha256(json.dumps(context, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+        base, number = name, 1
+        while name.casefold() in titles:
+            name = f'{base[:140]} (imported {number})'
+            number += 1
+        added.append(dict(deepcopy(context), id=key, name=name, volume=volume))
+        ids.add(key)
+        titles.add(name.casefold())
+        mapping[context['id']] = key
+    return added, mapping
+
+
+def adopt_links(meta, volumes, contexts):
+    """Point a package character's volume and context references at this project's IDs. Membership and
+    display labels that cannot be mapped are dropped. An alias whose scope cannot be mapped is returned in
+    `lost` so the caller removes it: keeping it with an empty scope would make it valid everywhere."""
+    meta, lost = deepcopy(meta), []
+
+    def mapped(ids, table):
+        return list(dict.fromkeys(table[key] for key in ids or [] if key in table))
+
+    for field, table in (('volumes', volumes), ('contexts', contexts)):
+        if field in meta:
+            kept = mapped(meta[field], table)
+            if kept:
+                meta[field] = kept
+            else:
+                del meta[field]
+    scopes = {}
+    for alias, scope in (meta.get('alias_scopes') or {}).items():
+        place, inside = mapped(scope.get('volumes'), volumes), mapped(scope.get('contexts'), contexts)
+        if (scope.get('volumes') and not place) or (scope.get('contexts') and not inside):
+            lost.append(alias)
+        else:
+            scopes[alias] = dict(volumes=place, contexts=inside)
+    labels = []
+    for label in meta.get('labels') or []:
+        place, inside = mapped(label.get('volumes'), volumes), mapped(label.get('contexts'), contexts)
+        if (label.get('volumes') and not place) or (label.get('contexts') and not inside):
+            continue
+        labels.append({'label': label['label'], **({'volumes': place} if place else {}),
+                       **({'contexts': inside} if inside else {})})
+    for field, value in (('alias_scopes', scopes), ('labels', labels)):
+        if value:
+            meta[field] = value
+        else:
+            meta.pop(field, None)
+    return meta, lost
+
+
 def _effective_target(name, data):
     from voice_rules import global_rules
     return global_rules(data).get(name) or name
@@ -571,6 +647,42 @@ def plan(request):
                 writes={'characters.json': encoded(data)}, kept=kept)
 
 
+def _union(left, right):
+    """Union of two scope lists where an empty list means "everywhere" and so absorbs the other."""
+    return sorted(set(left) | set(right)) if left and right else []
+
+
+def _merge_reach(target_meta, source_meta, source_aliases, target_had):
+    """Where the merged identity is recognised: wherever either identity was. An unrestricted alias or
+    membership stays unrestricted; the source's volumes are added to the target's."""
+    scopes = {alias.casefold(): (alias, dict(scope)) for alias, scope in (target_meta.get('alias_scopes') or {}).items()}
+    for alias in source_aliases:
+        key = alias.casefold()
+        source_scope = (source_meta.get('alias_scopes') or {})
+        source_scope = next((scope for text, scope in source_scope.items() if text.casefold() == key), None)
+        if key not in target_had:
+            if source_scope:
+                scopes[key] = (alias, dict(source_scope))
+            continue
+        ours = scopes[key][1] if key in scopes else {}
+        theirs = source_scope or {}
+        merged = {field: _union(ours.get(field, []), theirs.get(field, [])) for field in ('volumes', 'contexts')}
+        if merged['volumes'] or merged['contexts']:
+            scopes[key] = (scopes[key][0] if key in scopes else alias, merged)
+        else:
+            scopes.pop(key, None)
+    if scopes:
+        target_meta['alias_scopes'] = {alias: scope for alias, scope in scopes.values()}
+    else:
+        target_meta.pop('alias_scopes', None)
+    for field in ('volumes', 'contexts'):
+        merged = _union(target_meta.get(field, []), source_meta.get(field, []))
+        if merged:
+            target_meta[field] = merged
+        else:
+            target_meta.pop(field, None)
+
+
 def merge_plan(request):
     from voice_rules import digest
     from project_package import encoded, clean_script
@@ -592,17 +704,10 @@ def merge_plan(request):
         data['organization']['characters'][target] = deepcopy(source_item)
     target_entry = next(c for c in data['characters'] if c['name'] == target)
     source_entry = next(c for c in data['characters'] if c['name'] == source)
+    target_had = {alias.casefold() for alias in target_entry['aliases']}
     target_entry['aliases'] = list(dict.fromkeys([*target_entry['aliases'], source, source_item['label'], *source_entry['aliases']]))
-    if not rename and source_item.get('alias_scopes'):
-        target_meta = data['organization']['characters'][target]
-        scopes = {alias: dict(scope) for alias, scope in (target_meta.get('alias_scopes') or {}).items()}
-        for alias, scope in source_item['alias_scopes'].items():
-            if alias not in scopes:
-                scopes[alias] = dict(scope)
-            else:
-                for key in ('volumes', 'contexts'):
-                    scopes[alias][key] = sorted(set(scopes[alias].get(key, [])) | set(scope.get(key, [])))
-        target_meta['alias_scopes'] = scopes
+    if not rename:
+        _merge_reach(data['organization']['characters'][target], source_item, source_entry['aliases'], target_had)
     data['characters'] = [c for c in data['characters'] if c['name'] != source]
     data['organization']['characters'].pop(source)
     for c in data['characters']:
@@ -683,6 +788,41 @@ def apply(request, plan_id):
     return snapshot()
 
 
+def _forget_context(data, org, target):
+    """Remove a deleted context from every reference without widening any rule. An empty list means
+    "everywhere", so an alias or label limited to this context alone is removed, not emptied: it could
+    only ever apply inside the context that no longer exists."""
+    entries = {entry['name']: entry for entry in data['characters']}
+    for name, meta in org['characters'].items():
+        if 'contexts' in meta:
+            meta['contexts'] = [key for key in meta['contexts'] if key != target]
+        scopes = meta.get('alias_scopes')
+        if scopes:
+            for alias in [alias for alias, scope in scopes.items() if target in (scope.get('contexts') or [])]:
+                remaining = [key for key in scopes[alias]['contexts'] if key != target]
+                if remaining:
+                    scopes[alias]['contexts'] = remaining
+                    continue
+                del scopes[alias]
+                entries[name]['aliases'] = [text for text in entries[name].get('aliases', [])
+                                            if text.casefold() != alias.casefold()]
+            if not scopes:
+                del meta['alias_scopes']
+        if 'labels' in meta:
+            kept = []
+            for label in meta['labels']:
+                if target in (label.get('contexts') or []):
+                    remaining = [key for key in label['contexts'] if key != target]
+                    if not remaining:
+                        continue
+                    label['contexts'] = remaining
+                kept.append(label)
+            if kept:
+                meta['labels'] = kept
+            else:
+                del meta['labels']
+
+
 def context_edit(request):
     """Create, rename or delete one narrative context. Scenes stay reviewed data, never inferred."""
     from project_package import encoded
@@ -722,15 +862,7 @@ def context_edit(request):
         if not any(item['id'] == target for item in org['contexts']):
             raise ValueError('Choose an existing narrative context.')
         org['contexts'] = [item for item in org['contexts'] if item['id'] != target]
-        for meta in org['characters'].values():
-            if 'contexts' in meta:
-                meta['contexts'] = [key for key in meta['contexts'] if key != target]
-            for scope in (meta.get('alias_scopes') or {}).values():
-                if 'contexts' in scope:
-                    scope['contexts'] = [key for key in scope['contexts'] if key != target]
-            for label in meta.get('labels') or []:
-                if 'contexts' in label:
-                    label['contexts'] = [key for key in label['contexts'] if key != target]
+        _forget_context(data, org, target)
         for context in org['contexts']:
             context.setdefault('scenes', [])
         created = None

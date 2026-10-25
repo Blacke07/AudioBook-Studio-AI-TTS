@@ -175,6 +175,22 @@ def _local_folder(source):
     return project.is_local_source(source) and Path(source).is_dir()
 
 
+def _volume_map(incoming, current, adopting):
+    """Package volume ID -> the ID that volume has here (or will have, when volumes are imported).
+    Volumes are matched by name; an ID the package does not describe is kept if it exists here."""
+    local = {item['name']:project.volume_id(item) for item in current}
+    result = {key:key for key in local.values()}
+    for item in incoming.volumes:
+        key = project.volume_id(item)
+        if item['name'] in local:
+            result[key] = local[item['name']]
+        elif adopting and project.is_local_source(item['source']):
+            result[key] = key
+        else:
+            result.pop(key, None)
+    return result
+
+
 def plan(incoming, choices):
     selected = _choices(choices, incoming.meta['parts'])
     writes, report = {}, []
@@ -197,7 +213,7 @@ def plan(incoming, choices):
     registry, samples = fixed_voices.load(), fixed_voices.samples()
     if 'cast' in selected:
         from voice_rules import explicit_rules
-        from character_registry import organization, document
+        from character_registry import organization, document, adopt_contexts, adopt_links
         merged_rules = explicit_rules()
         incoming_data = package.json_data(incoming.files['characters.json'])
         incoming_rules = explicit_rules(incoming_data)
@@ -217,6 +233,11 @@ def plan(incoming, choices):
                 merged_org['categories'].append({**category, 'id':key})
                 category_ids[key] = category
             category_map[category['id']] = key
+        volume_map = _volume_map(incoming, project.volumes(), 'volumes' in selected)
+        new_contexts, context_map = adopt_contexts(imported_org['contexts'], volume_map, merged_org['contexts'])
+        merged_org['contexts'].extend(new_contexts)
+        for context in new_contexts:
+            row('context', context['name'], 'add')
         changed_roles = set()
         for item in incoming.characters:
             name = item[0]
@@ -225,20 +246,26 @@ def plan(incoming, choices):
             if name in by_name and name not in choices.get('characters',[]):
                 row('character',name,'skip','Keep mine', conflict=True)
                 continue
-            row('character',name,'update' if name in by_name else 'add', conflict=name in by_name)
+            metadata, lost = adopt_links(imported_org['characters'][name], volume_map, context_map)
+            if lost:
+                gone = {alias.casefold() for alias in lost}
+                item = [item[0], ', '.join(alias for alias in glossary.aliases_of(item[1])
+                                           if alias.casefold() not in gone), *item[2:]]
+            row('character',name,'update' if name in by_name else 'add',
+                'Not imported, scoped to a volume or context missing here: '+', '.join(lost) if lost else '',
+                conflict=name in by_name)
             merged_rules.pop(name, None)
             if name in incoming_rules:
                 merged_rules[name] = incoming_rules[name]
             by_name[name] = item
             changed_roles.add(name)
-            metadata = dict(imported_org['characters'][name])
             metadata['category'] = category_map[metadata['category']]
             merged_org['characters'][name] = metadata
         merged = list(by_name.values())
         merged_data = glossary.to_data(merged, read_as=merged_rules)
         merged_data['organization'] = merged_org
         organization(merged_data)
-        if changed_roles and merged_data != document():
+        if (changed_roles or new_contexts) and merged_data != document():
             writes['characters.json'] = package.encoded(merged_data)
         for role, entry in incoming.registry.items():
             if role in registry and role not in choices.get('voices',[]):
