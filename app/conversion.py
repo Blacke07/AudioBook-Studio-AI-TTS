@@ -3,12 +3,13 @@ import hashlib
 import io
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 
 import numpy as np
 import soundfile as sf
 
+import emotions
 import engine_client
 import fixed_voices
 import glossary
@@ -86,6 +87,12 @@ def narrator_voice(settings):
     fixed = fixed_voices.get(NARRATOR)
     if fixed:  # the approved take, cloned by Base: one identity for the whole book
         return Voice(fixed["id"], "", "", int(narrator["seed"]), BASE_CLONE)
+    return narrator_recipe(settings)
+
+
+def narrator_recipe(settings):
+    """The narrator's description voice, also when a take is fixed (to audition new takes)."""
+    narrator = settings["narrator"]
     mode = MODEL_NAMES[narrator["mode"]]
     description = narrator["description"] or describe(narrator["profile"])
     voice_parameters(mode, narrator["speaker"], description, narrator["instructions"])
@@ -107,6 +114,7 @@ class Chunk:
     line: int = -1
     variant: int = 0
     voice_role: str = ""
+    emotion: str = ""
 
 
 def plan_chunks(lines, voices, dialogue_pause):
@@ -124,7 +132,8 @@ def plan_chunks(lines, voices, dialogue_pause):
                 pause = boundary_pause(line, lines[index + 1], dialogue_pause)
             else:
                 pause = 0.0
-            chunks.append(Chunk(line.role, passage, pause, line.row if line.row >= 0 else index, line.variant, line.voice_role))
+            chunks.append(Chunk(line.role, passage, pause, line.row if line.row >= 0 else index, line.variant,
+                                line.voice_role, line.emotion))
     return chunks
 
 
@@ -137,10 +146,35 @@ def generation_order(chunks, voices):
     return [index for mode in modes for index, chunk in enumerate(chunks) if voices[chunk.voice_role or chunk.role].mode == mode]
 
 
+def delivered(chunk, voice):
+    """The voice as it reads this chunk, and whether the chunk's emotion is heard. A recipe voice adds the
+    emotion's instruction to its delivery; a fixed voice clones the role's approved take for that emotion, or
+    its neutral take when there is none (Base takes no instructions)."""
+    emotion = chunk.emotion or emotions.NEUTRAL
+    if emotion == emotions.NEUTRAL:
+        return voice, False
+    if voice.mode == BASE_CLONE:
+        take = fixed_voices.take(chunk.voice_role or chunk.role, emotion)
+        return (replace(voice, speaker=take["id"]), True) if take else (voice, False)
+    return replace(voice, instructions=f"{voice.instructions} {emotions.instruction(emotion)}".strip()), True
+
+
+def missing_takes(chunks, voices):
+    """{(role, emotion)} of fixed voices asked for an emotion they have no approved take for."""
+    return {(chunk.voice_role or chunk.role, chunk.emotion) for chunk in chunks
+            if chunk.emotion and chunk.emotion != emotions.NEUTRAL
+            and voices[chunk.voice_role or chunk.role].mode == BASE_CLONE
+            and not delivered(chunk, voices[chunk.voice_role or chunk.role])[1]}
+
+
 def passage_key(chunk, voice, temperature):
-    """Everything that changes the sound of a passage; equal keys can reuse the same file."""
+    """Everything that changes the sound of a passage; equal keys can reuse the same file. An emotion counts
+    only where it is heard (its instruction or its own take); neutral passages keep their earlier keys."""
+    voice, heard = delivered(chunk, voice)
     data = [voice.mode, voice.speaker, voice.description, voice.instructions, voice.seed + chunk.variant,
             round(float(temperature), 3), speakable(chunk.text)]
+    if heard:
+        data.append({"emotion": chunk.emotion})
     if voice.mode == BASE_CLONE:
         data.append(CLONE_TIMBRE)
     if MODEL_FILES[voice.mode] != STANDARD_MODEL_FILES[voice.mode]:
@@ -184,6 +218,8 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
         check_category_references(lines, registry_document)
         from spoken_text import apply_lines
         lines = apply_lines(lines, script)
+        import delivery
+        lines = delivery.apply_lines(lines, script)
         if settings.get("speech_tags", "omit_fixed") == "omit_fixed":
             fixed = set(fixed_voices.load())
             lines, _ = drop_simple_tags(lines, lambda line: line.role in fixed and line.voice_role == line.role)
@@ -198,6 +234,8 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
             from spoken_text import apply_lines
             rows = [[PAUSE if row[0] == PAUSE else NARRATOR, *row[1:]] for row in script['rows']]
             lines = apply_lines(read_script(text, True, rows, text), script)
+            import delivery
+            lines = delivery.apply_lines(lines, script)
         else:
             lines = read_script(text, False, None, "")
         voices = {NARRATOR: narrator}
@@ -266,7 +304,13 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
             return None
         chunk = chunks[index]
         progress(len(chunks) - len(order) + done, len(chunks), f"{chunk.role}: {chunk.text[:60]}")
-        render_checked(chunk, voices[chunk.voice_role or chunk.role], temperature, keys[index], references)
+        role = chunk.voice_role or chunk.role
+        voice, heard = delivered(chunk, voices[role])
+        checked = references
+        if heard and voice.mode == BASE_CLONE and role in references:
+            # an emotion take is checked against itself: a whisper is not a drift from the neutral take
+            checked = {**references, role: fixed_voices.FOLDER / fixed_voices.take(role, chunk.emotion)["file"]}
+        render_checked(chunk, voice, temperature, keys[index], checked)
     progress(len(chunks), len(chunks), "Assembling the chapter")
     chapter.work.mkdir(parents=True, exist_ok=True)
     temporary = chapter.audio_file.with_suffix(".tmp.wav")
@@ -285,14 +329,17 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
             if suspicious(speakable(chunk.text), length) or check.get("drifting"):
                 flagged.add(chunk.line)
             passages.append({"role": chunk.role, "text": chunk.text, "line": chunk.line, "key": key,
-                             "voice_role": chunk.voice_role or chunk.role, "start": round(seconds, 3), "seconds": round(length, 3)})
+                             "voice_role": chunk.voice_role or chunk.role, "start": round(seconds, 3), "seconds": round(length, 3),
+                             **({"emotion": chunk.emotion} if chunk.emotion else {})})
             output.write(audio)
             seconds += length
             if chunk.pause_after:
                 output.write(np.zeros(int(RATE * chunk.pause_after), dtype=np.float32))
                 seconds += chunk.pause_after
     temporary.replace(chapter.audio_file)
+    missing = sorted(missing_takes(chunks, voices))
     meta = {"keys": keys, "seconds": round(seconds, 2), "flagged_lines": sorted(flagged), "passages": passages,
+            **({"missing_takes": [{"role": role, "emotion": emotion} for role, emotion in missing]} if missing else {}),
             "voice_checks": checks, "voices": {name: voice.__dict__ for name, voice in voices.items()}}
     project.write_json(chapter.audio_meta, meta)
     return meta

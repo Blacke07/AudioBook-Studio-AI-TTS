@@ -468,3 +468,14 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 .chip.has-reason { cursor:help; }
 .tools-row { display:flex; justify-content:flex-end; gap:2px; }
 td.row-tools { white-space:nowrap; }
+
+/* line emotion: quiet until the line is hovered or the menu is used; a proposal or a missing take stays visible */
+.emotion-pick { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:6px; white-space:normal; font-weight:normal; }
+.emotion-pick select { width:auto; padding:2px 8px; border-radius:999px; font-size:.82rem; }
+.emotion-pick.quiet { opacity:.45; transition:opacity .15s; }
+.line:hover .emotion-pick.quiet, .emotion-pick.quiet:focus-within { opacity:1; }
+@media (prefers-reduced-motion: reduce) { .emotion-pick.quiet { transition:none; } }
+/* emotion takes of a fixed voice */
+.emotion-takes { display:grid; gap:10px; }
+.emotion-take { display:grid; gap:6px; padding:10px; border:1px solid var(--line); border-radius:9px; }
+.emotion-take audio { width:100%; }

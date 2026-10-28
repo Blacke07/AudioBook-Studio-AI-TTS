@@ -58,6 +58,7 @@ class Line:
     variant: int = 0   # added to the speaker's variant number when the author asks for another take
     row: int = -1      # index of the script row it comes from (for the editor)
     voice_role: str = ""  # reading identity; role remains the actual speaker
+    emotion: str = ""     # delivery key from emotions.py; empty is neutral
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+import delivery
+import emotions
 import export
 import fixed_voices
 import glossary
@@ -28,7 +30,8 @@ import voice_check
 import voice_rules
 import spoken_text
 from voice_rules_api import create_router as voice_rules_router
-from conversion import CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, narrator_voice, preview_voice, speakable
+from conversion import (CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, missing_takes, narrator_recipe, narrator_voice,
+                        preview_voice, speakable)
 from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast
 from voices import (AUTHOR_DELIVERY, BASE_CLONE, CHARACTER_PROFILES, CUSTOM_SPEAKERS, MODEL_NAMES, PROFILES,
                     describe, voice_parameters)
@@ -244,9 +247,13 @@ def chapter(volume: str, stem: str):
     takes = {}
     for passage in meta.get("passages", []):
         takes.setdefault(passage["line"], []).append(passage)
+    missing = {}  # line -> (role, emotion) read with the neutral take
     try:  # rows the current plan does not read (plain speech tags of fixed voices)
-        chunks, _, _ = chapter_plan(item, settings, rows)
+        chunks, voices, _ = chapter_plan(item, settings, rows)
         spoken = {chunk.line for chunk in chunks}
+        gaps = missing_takes(chunks, voices)
+        missing = {chunk.line: (chunk.voice_role or chunk.role, chunk.emotion) for chunk in chunks
+                   if (chunk.voice_role or chunk.role, chunk.emotion) in gaps}
     except ValueError:
         spoken = None
     registry_document = character_registry.document()
@@ -262,6 +269,11 @@ def chapter(volume: str, stem: str):
         spoken_error=""
     except ValueError as error:
         spoken_edits={}; spoken_error=str(error)
+    try:
+        chosen = {} if manual_draft else delivery.entries(script)
+        delivery_error = ""
+    except ValueError as error:
+        chosen, delivery_error = {}, str(error)
     if script:
         scenes = character_registry.scene_indices(script["rows"])
         context_names = {context["id"]: context["name"] for context in registry["contexts"]}
@@ -279,7 +291,11 @@ def chapter(volume: str, stem: str):
                     "context_ids": bound,
                     "contexts": [context_names[key] for key in bound],
                     "omitted": spoken is not None and row[0] == NARRATOR and index not in spoken
-                               and SIMPLE_TAG_RE.match(str(row[1])) is not None}
+                               and SIMPLE_TAG_RE.match(str(row[1])) is not None,
+                    "emotion": chosen[index]["emotion"] if index in chosen else emotions.NEUTRAL,
+                    "emotion_source": chosen[index]["source"] if index in chosen else ""}
+            if index in missing:
+                line["emotion_missing"] = f"No {emotions.label(missing[index][1]).lower()} take for {missing[index][0]}"
             if index in takes:
                 line["start"] = takes[index][0]["start"]
                 line["seconds"] = round(sum(take["seconds"] for take in takes[index]), 2)
@@ -297,6 +313,8 @@ def chapter(volume: str, stem: str):
             "manual_draft": manual_draft, "source_hash": script["source_hash"],
             "voice_rules":script.get("voice_rules",{}), "voice_error":voice_error,
             "spoken_error":spoken_error, "spoken_conflicts":script.get("spoken_text",{}).get("conflicts",[]),
+            "delivery_error": delivery_error, "emotions": emotions.choices(),
+            "missing_takes": sorted({f"{role}|{emotion}" for role, emotion in missing.values()}),
             "blockers": blockers, "unassigned": sum(1 for line in lines if line["speaker"] == UNASSIGNED),
             "contexts": [{"id": context["id"], "name": context["name"]} for context in registry["contexts"]
                          if context["volume"] == character_registry.volume_key(volume)],
@@ -358,6 +376,14 @@ def _save_rows(item, script, rows):
         script["attribution"] = notes
     else:
         script.pop("attribution", None)
+    try:  # an emotion follows its line text through speaker changes and splits
+        kept = delivery.carry(original_script, clean)
+    except ValueError:
+        kept = []
+    if kept:
+        script["delivery"] = {"lines": kept}
+    else:
+        script.pop("delivery", None)
     script["speakers"] = list(dict.fromkeys(row[0] for row in clean if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
     item.save_script(script)
     if item.error_file.exists() and item.error_file.read_text(encoding="utf-8").startswith("analysis:"):
@@ -388,6 +414,12 @@ def split_row(data: dict = Body(...)):
         rows[index][1] = text[:position].rstrip()
         rows.insert(index + 1, [data.get("speaker") or NARRATOR, text[position:].strip(), True, 0])
         return {"added": _save_rows(item, script, rows)}
+
+
+@app.put("/api/chapter/delivery")
+def save_delivery(data: dict = Body(...)):
+    with worker.idle_guard("saving line emotions"):
+        return delivery.save(data)
 
 
 @app.post("/api/chapter/spoken-text/preview")
@@ -427,7 +459,9 @@ def _fixed_info(role):
     entry = fixed_voices.get(role)
     if not entry:
         return None
-    return {**entry, "url": _url(fixed_voices.FOLDER / entry["file"])}
+    takes = {emotion: {**take, "url": _url(fixed_voices.FOLDER / take["file"])}
+             for emotion, take in (entry.get("takes") or {}).items()}
+    return {**entry, "url": _url(fixed_voices.FOLDER / entry["file"]), "takes": takes}
 
 
 @app.post("/api/voices/fix")
@@ -439,8 +473,12 @@ def fix_voice(data: dict = Body(...)):
     role = str(data["role"]).strip()
     if role != NARRATOR and role not in {row[0] for row in glossary.load()}:
         raise ValueError(f"{role} is not in the character glossary.")
-    entry = fixed_voices.fix(role, take, speakable(str(data["text"])[:600]), data.get("origin", {}))
-    return {"fixed": _fixed_info(role), "seconds": entry["seconds"]}
+    emotion = emotions.check(data.get("emotion") or emotions.NEUTRAL)
+    previous = fixed_voices.get(role) or {}
+    entry = fixed_voices.fix(role, take, speakable(str(data["text"])[:600]), data.get("origin", {}), emotion)
+    # a new neutral voice is another identity: the old emotion takes are no longer used
+    dropped = sorted(previous.get("takes") or {}) if emotion == emotions.NEUTRAL else []
+    return {"fixed": _fixed_info(role), "seconds": entry["seconds"], "dropped_takes": dropped}
 
 
 def _fixed_paths():
@@ -506,14 +544,46 @@ def voice_presets():
 @app.post("/api/presets/apply")
 def apply_preset(data: dict = Body(...)):
     role = str(data["role"]).strip()
+    previous = fixed_voices.get(role) or {}
     entry = presets.apply(str(data["id"]), role)
-    return {"fixed": _fixed_info(role), "seconds": entry["seconds"]}
+    return {"fixed": _fixed_info(role), "seconds": entry["seconds"], "dropped_takes": sorted(previous.get("takes") or {})}
 
 
 @app.post("/api/voices/unfix")
 def unfix_voice(data: dict = Body(...)):
-    fixed_voices.unfix(str(data["role"]))
+    fixed_voices.unfix(str(data["role"]), emotions.check(data.get("emotion") or emotions.NEUTRAL))
     return {"ok": True}
+
+
+@app.post("/api/voices/emotion-preview")
+def emotion_preview(data: dict = Body(...)):
+    """An audition take of a fixed role for one emotion: the role's description voice with the emotion's
+    instruction, on the seed of its approved neutral take, compared with that take's voice fingerprint."""
+    settings = project.load_settings()
+    role = str(data["role"]).strip()
+    emotion = emotions.check(data.get("emotion"))
+    if emotion == emotions.NEUTRAL:
+        raise ValueError("Audition the neutral voice from the character card or the Narrator page.")
+    fixed = fixed_voices.get(role)
+    if not fixed:
+        raise ValueError(f"Fix the neutral voice of {role} before auditioning emotions.")
+    if role == NARRATOR:
+        recipe = narrator_recipe(settings)
+    else:
+        row = next((row for row in glossary.load() if row[0] == role), None)
+        if row is None:
+            raise ValueError(f"{role} is not in the character glossary.")
+        recipe = read_cast([row], MODEL_NAMES[settings["narrator"]["mode"]], narrator_voice(settings), {role},
+                           use_fixed=False)[role]
+    text = " ".join(str(data.get("text") or "").split())[:600] or fixed_voices.emotion_sample(role, emotion)
+    fixed_voices.set_emotion_sample(role, emotion, text)
+    seed = int((fixed.get("origin") or {}).get("seed", recipe.seed)) + int(data.get("variant", 0))
+    voice = Voice(recipe.speaker, recipe.description,
+                  f"{recipe.instructions} {emotions.instruction(emotion)}".strip(), seed, recipe.mode)
+    target = preview_voice(voice, text, settings["narrator"]["temperature"])
+    score = voice_check.closeness(target, fixed_voices.FOLDER / fixed["file"]) if voice_check.available() else None
+    return {"url": _url(target), "path": str(target.relative_to(project.ROOT)).replace("\\", "/"), "text": text,
+            "seed": seed, "same_voice": None if score is None else round(score, 2)}
 
 
 @app.get("/api/characters")
@@ -521,7 +591,10 @@ def characters():
     settings = project.load_settings()
     rows = glossary.load()
     return {"default_sample": CHARACTER_SAMPLE, "characters": [{**dict(zip(FIELDS, row)), "read_as":voice_rules.global_rules().get(row[0],row[0]), "fixed": _fixed_info(row[0]),
-                            "sample": fixed_voices.sample_for(row[0])} for row in rows],
+                            "sample": fixed_voices.sample_for(row[0]),
+                            "emotion_samples": {key: fixed_voices.emotion_sample(row[0], key)
+                                                for key in emotions.KEYS if key != emotions.NEUTRAL}} for row in rows],
+            "emotions": emotions.choices(),
             "duplicates": glossary.duplicate_voices(rows, settings["narrator"]["mode"]),
             "profiles": {"narrator": list(PROFILES),
                          **{gender: list(profiles) for gender, profiles in CHARACTER_PROFILES.items()}},
@@ -578,6 +651,9 @@ def get_settings():
     return {"settings": project.load_settings(), "formats": export.formats(), "ffmpeg": export.available(),
             "profiles": PROFILES, "custom_speakers": CUSTOM_SPEAKERS, "author_delivery": AUTHOR_DELIVERY,
             "preview_text": fixed_voices.sample_for(NARRATOR) or PREVIEW_TEXT, "fixed": _fixed_info(NARRATOR),
+            "emotions": emotions.choices(),
+            "emotion_samples": {key: fixed_voices.emotion_sample(NARRATOR, key)
+                                for key in emotions.KEYS if key != emotions.NEUTRAL},
             "model_profile": {key: model_profile.CURRENT[key] for key in ("name", "label", "gemma")},
             "video_factor": video_jobs.measurement(project.load_settings())}
 

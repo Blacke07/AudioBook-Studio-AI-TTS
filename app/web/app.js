@@ -404,7 +404,7 @@ function nextToResolve(lines, from) {
 }
 /* Lines still waiting for the author, in reading order, with why. */
 function reviewQueue(lines) {
-  const why = (line) => line.speaker === UNASSIGNED ? "Unassigned" : line.basis === "context" ? "Context" : line.flagged ? "Pacing" : "";
+  const why = (line) => line.speaker === UNASSIGNED ? "Unassigned" : line.basis === "context" ? "Context" : line.flagged ? "Pacing" : line.emotion_source === "ai" ? "Emotion" : "";
   return lines.flatMap((line, index) => (why(line) ? [{ index, why: why(line), text: line.text }] : []));
 }
 const stickyHeader = {
@@ -417,7 +417,13 @@ async function viewChapter(volume, stem, after = {}) {
   const c = data.chapter, lines = data.lines;
   const unclear = lines.filter((l) => l.speaker === UNASSIGNED).length;
   const contextual = lines.filter((l) => l.basis === "context").length;
-  const reviewCount = unclear + lines.filter((l) => l.flagged).length + contextual;
+  const proposed = lines.filter((l) => l.emotion_source === "ai").length;
+  const reviewCount = reviewQueue(lines).length;
+  const emotionLabel = (key) => (data.emotions || []).find((e) => e.key === key)?.label || key;
+  const missingTakes = (data.missing_takes || []).map((pair) => pair.split("|")).map(([role, emotion]) => `${esc(emotionLabel(emotion).toLowerCase())} for ${esc(role)}`);
+  /* The line's emotion: Gemma's proposal is marked for review like a context speaker; a fixed voice without
+     a take for it is read with its neutral take, and says so. */
+  const emotionPick = (line, index) => line.speaker === PAUSE ? "" : `<span class="emotion-pick ${line.emotion === "neutral" && !line.emotion_source ? "quiet" : ""}"><select data-emotion="${index}" aria-label="Emotion of this line" title="${data.manual_draft ? "Analyze the chapter first to choose emotions." : "How this line is spoken. Changing it regenerates only this line."}" ${data.manual_draft ? "disabled" : ""}>${(data.emotions || []).map((e) => `<option value="${e.key}" ${e.key === line.emotion ? "selected" : ""}>${esc(e.label)}</option>`).join("")}</select>${line.emotion_source === "ai" ? `<span class="chip info" title="Proposed by Gemma from the line and its punctuation; review it.">AI</span><button type="button" class="btn ghost small" data-emotion-keep="${index}" title="Keep this emotion as your choice">Keep</button>` : ""}${line.emotion_missing ? `<span class="chip warn" title="This fixed voice has no approved take for this emotion, so its neutral take is used. Approve one in Characters.">${esc(line.emotion_missing)}</span>` : ""}</span>`;
   const sceneNumbers = [...new Set(lines.map((l) => l.scene ?? 0))].sort((a, b) => a - b);
   const sceneLabel = (scene) => {
     const names = (lines.find((l) => l.scene === scene)?.context_ids || [])
@@ -426,7 +432,7 @@ async function viewChapter(volume, stem, after = {}) {
   };
   const speakers = [...new Set(lines.map((l) => l.speaker).filter((s) => ![NARRATOR, UNASSIGNED, PAUSE].includes(s)))];
   const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) =>
-    lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged || line.basis === "context")));
+    lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged || line.basis === "context" || line.emotion_source === "ai")));
   const kind = (line) => line.speaker === PAUSE ? "pause" : HEADING.test(line.text) ? "heading" : line.speaker === NARRATOR ? "narration" : "speech";
   const pinned = stickyHeader.get();
   const queue = reviewQueue(lines);
@@ -458,6 +464,9 @@ async function viewChapter(volume, stem, after = {}) {
     ${c.video.url ? `<div class="row" style="margin:10px 0 16px"><a class="btn" href="${esc(c.video.url)}" target="_blank" rel="noopener">${icon("play")} Open video</a><button class="btn" id="show-video">${icon("folder")} Show in folder</button></div>` : ""}
     ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
     ${data.spoken_error ? `<div class="banner"><div><b>Spoken-text edits need review</b><p>${esc(data.spoken_error)}</p><details><summary>Stale edits</summary>${data.spoken_conflicts.map(entry=>`<div class="log">${esc(entry.text || "")}</div>`).join("")}</details><button class="btn" data-clear-spoken>Discard stale spoken-text edits</button></div></div>` : ""}
+    ${data.delivery_error ? `<div class="banner"><div><b>Line emotions need review</b><p>${esc(data.delivery_error)}</p></div></div>` : ""}
+    ${missingTakes.length ? `<div class="banner">${icon("flag")}<div><b>Some emotions use the neutral take.</b> No approved take: ${missingTakes.join(", ")}. A fixed voice takes no instructions, so these lines keep the neutral delivery. <a href="#/characters">Approve emotion takes in Characters</a>.</div></div>` : ""}
+    ${proposed ? `<div class="banner">${icon("wand")}<div><b>${proposed} ${proposed === 1 ? "emotion was" : "emotions were"} proposed by Gemma.</b> Review them in Lines to review: choose another emotion or Keep. Your choices are kept when you analyze again.</div></div>` : ""}
     ${data.voice_error ? `<div class="banner"><div><b>Voice rules need review</b><p>${esc(data.voice_error)}</p><button class="btn" data-clear-voice-conflicts>Review and clear stale line overrides</button></div></div>` : ""}
     ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} ${unclear === 1 ? "line needs" : "lines need"} a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
     ${(data.blockers || []).length ? `<div class="banner">${icon("flag")}<div><b>${data.blockers.length} ${data.blockers.length === 1 ? "character needs" : "characters need"} approval in this chapter.</b><p>${data.blockers.map((b) => esc(b.label)).join(", ")}</p><div class="row">${data.blockers.map((b) => `<button class="btn" data-review-character="${esc(b.name)}">Review ${esc(b.label)}</button>`).join("")}</div></div></div>` : ""}
@@ -471,7 +480,7 @@ async function viewChapter(volume, stem, after = {}) {
         <div class="script" id="script">${shown.map(({ line, index }, position) => `
           <div class="line ${kind(line)} ${line.joined ? "joined" : position ? "gap" : ""} ${line.speaker === UNASSIGNED ? "unclear" : ""} ${line.omitted ? "omitted" : ""}" data-index="${index}" style="--c:${colorFor(line.speaker)}" ${line.omitted ? 'title="Omitted: the fixed voice identifies the speaker. You can change this in Settings."' : ""}>
             <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.speaker)}</button>`}</div>
-            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.basis === "context" ? ` <span class="chip" title="Speaker inferred from narrative context; review this line.">context</span>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}</div>
+            <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.basis === "context" ? ` <span class="chip" title="Speaker inferred from narrative context; review this line.">context</span>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}${emotionPick(line, index)}</div>
             <div class="tools">
               ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play from here">${icon("play")}</button>` : ""}
               ${![PAUSE,UNASSIGNED].includes(line.speaker) ? `<button type="button" class="btn small reading-voice" data-voice-rule="${index}" title="Edit the reading voice for this line">Voice: ${esc(line.read_as || line.speaker)}</button>` : ""}
@@ -555,6 +564,13 @@ async function viewChapter(volume, stem, after = {}) {
       [{ label: "Cancel", value: null }, { label: "Split", value: "form", primary: true }]);
     if (form) guard(async () => { await api("/api/chapter/split", { method: "POST", body: { volume, stem, index, source_hash:data.source_hash, ...form } }); viewChapter(volume, stem); });
   });
+  const saveEmotion = (index, emotion, control) => guard(async () => {
+    await api("/api/chapter/delivery", { method: "PUT", body: { volume, stem, row: index, emotion, source_hash: data.source_hash } });
+    toast(`${emotionLabel(emotion)} · saved. Only this line is regenerated in the next run.`);
+    viewChapter(volume, stem);
+  }, control);
+  $$("[data-emotion]").forEach((select) => select.onchange = () => saveEmotion(+select.dataset.emotion, select.value, select));
+  $$("[data-emotion-keep]").forEach((button) => button.onclick = () => saveEmotion(+button.dataset.emotionKeep, lines[+button.dataset.emotionKeep].emotion, button));
   $$("[data-variant]").forEach((button) => button.onclick = () => guard(() => {
     const next = rows();
     next[+button.dataset.variant][3] = (next[+button.dataset.variant][3] || 0) + 1;
@@ -772,6 +788,52 @@ function bindFieldHelp(root) {
   });
 }
 
+/* Emotion takes of a fixed voice: Base clones an approved recording and takes no instructions, so each emotion
+   needs its own approved take of the same voice. Without one, lines with that emotion use the neutral take. */
+function emotionTakesHtml(fixed, samples, choices) {
+  const keys = (choices || []).filter((e) => e.key !== "neutral");
+  const approved = keys.filter((e) => fixed.takes?.[e.key]).length;
+  return `<details class="character-section" data-emotion-takes><summary>Emotion takes · ${approved}/${keys.length} ${fieldHelp("Emotion takes", "A fixed voice clones its approved recording and takes no delivery instructions. Approve a separate take of the same voice for each emotion you use; lines with that emotion clone it. Without one, those lines use the neutral take.")}</summary>
+    <div class="emotion-takes">${keys.map((e) => {
+      const take = fixed.takes?.[e.key];
+      return `<div class="emotion-take" data-emotion-take="${e.key}">
+        <div class="row between"><b>${esc(e.label)}</b>${take ? `<span class="chip ok">${icon("check")} Approved</span>` : `<span class="chip">Neutral take used</span>`}</div>
+        ${take ? `<audio controls preload="none" src="${esc(take.url)}"></audio>` : ""}
+        <textarea data-emotion-text rows="2" aria-label="${esc(e.label)} audition line">${esc(samples?.[e.key] || "")}</textarea>
+        <div class="row"><button type="button" class="btn small" data-emotion-audition>${icon("play")} Audition</button>${take ? `<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>` : ""}</div>
+        <div data-emotion-result></div></div>`;
+    }).join("")}</div></details>`;
+}
+/* A new neutral voice is another identity, so the server removes the emotion takes of the previous one. */
+const droppedTakes = (result) => result?.dropped_takes?.length ? ` Its ${result.dropped_takes.length === 1 ? "emotion take was" : `${result.dropped_takes.length} emotion takes were`} removed: approve new ones for this voice.` : "";
+function bindEmotionTakes(root, role, refresh) {
+  bindFieldHelp(root);
+  $$("[data-emotion-take]", root).forEach((box) => {
+    const emotion = box.dataset.emotionTake;
+    const label = $("b", box).textContent;
+    let variant = 0;
+    const audition = (button) => guard(async () => {
+      const take = await api("/api/voices/emotion-preview", { method: "POST", body: { role, emotion, text: $("[data-emotion-text]", box).value, variant } });
+      const same = take.same_voice == null ? "" : `Similarity to the neutral take: <b>${take.same_voice.toFixed(2)}</b> (1 = identical).`;
+      $("[data-emotion-result]", box).innerHTML = `<div class="take"><b>Take ${take.seed}</b><audio controls autoplay src="${esc(take.url)}"></audio>
+        <div class="row"><button type="button" class="btn primary small" data-emotion-fix>${icon("lock")} Approve take</button><button type="button" class="btn ghost small" data-emotion-again>${icon("dice")} Another take</button></div>
+        <div class="small muted" style="grid-column:1/-1">${same} Listen for the same person in a ${esc(label.toLowerCase())} delivery.</div></div>`;
+      $("[data-emotion-again]", box).onclick = (event) => { variant += 1; audition(event.currentTarget); };
+      $("[data-emotion-fix]", box).onclick = (event) => guard(async () => {
+        await api("/api/voices/fix", { method: "POST", body: { role, path: take.path, text: take.text, emotion, origin: { seed: take.seed, emotion } } });
+        toast(`${label} take approved for ${role}. Lines with this emotion become outdated and use it.`);
+        await refresh();
+      }, event.currentTarget);
+    }, button);
+    $("[data-emotion-audition]", box).onclick = (event) => audition(event.currentTarget);
+    $("[data-emotion-remove]", box)?.addEventListener("click", async () => {
+      if (!await modal(`Remove the ${label.toLowerCase()} take?`, `<p>Lines of ${esc(role)} with this emotion will use the neutral take again and become Outdated.</p>`,
+        [{ label: "Cancel", value: false }, { label: "Remove take", value: true, primary: true }])) return;
+      guard(async () => { await api("/api/voices/unfix", { method: "POST", body: { role, emotion } }); await refresh(); });
+    });
+  });
+}
+
 function drawCharacters() {
   const d = characterData;
   const profileNames = (gender) => [...(d.profiles[gender] || []), ...(gender === "unknown" ? [] : d.profiles.unknown || []), ...d.profiles.narrator];
@@ -811,7 +873,8 @@ function drawCharacters() {
         <audio data-audio controls class="hidden" style="width:100%"></audio>
         ${c.fixed ? `<div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
           ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
-          <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
+          <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>
+          ${emotionTakesHtml(c.fixed, c.emotion_samples, d.emotions)}` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
         <div class="small muted">Shared performance variation ${fieldHelp('Shared performance variation','The Narrator page sets one temperature for all voices, including characters. Each character has a separate seed. This does not change the fixed reference.')}<a href="#/narrator">Narrator settings</a></div>
         <details class="character-section"><summary>Speaker detection</summary>
           <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
@@ -863,8 +926,8 @@ function drawCharacters() {
       $("[data-fix]", card)?.classList.remove("hidden");
     }, e.currentTarget);
     $("[data-fix]", card)?.addEventListener("click", (e) => guard(async () => {
-      await api("/api/voices/fix", { method: "POST", body: { role: c.name, path: lastTake.path, text: lastTake.text, origin: { seed: c.seed, design: c.design } } });
-      toast(`The voice for ${c.name} is fixed and will be reused throughout the book.`);
+      const fixed = await api("/api/voices/fix", { method: "POST", body: { role: c.name, path: lastTake.path, text: lastTake.text, origin: { seed: c.seed, design: c.design } } });
+      toast(`The voice for ${c.name} is fixed and will be reused throughout the book.${droppedTakes(fixed)}`);
       await viewCharacters();
     }, e.currentTarget));
     $("[data-preset-pick]", card).onclick = (e) => guard(async () => {
@@ -876,8 +939,8 @@ function drawCharacters() {
       if (!id) return;
       clearTimeout(characterSaveTimer);
       await api("/api/characters", { method: "PUT", body: { characters: characterData.characters } });
-      await api("/api/presets/apply", { method: "POST", body: { id, role: c.name } });
-      toast(`${c.name} now uses the preset voice “${all.find((p) => p.id === id).name}”.`);
+      const fixed = await api("/api/presets/apply", { method: "POST", body: { id, role: c.name } });
+      toast(`${c.name} now uses the preset voice “${all.find((p) => p.id === id).name}”.${droppedTakes(fixed)}`);
       await viewCharacters();
     }, e.currentTarget);
     $("[data-candidates]", card).onclick = (e) => guard(async () => {
@@ -890,11 +953,12 @@ function drawCharacters() {
       $$("[data-pick]", list).forEach((b) => b.onclick = () => guard(async () => {
         c.seed = +b.dataset.seed;
         await api("/api/characters", { method: "PUT", body: { characters: characterData.characters } });
-        await api("/api/voices/fix", { method: "POST", body: { role: c.name, path: b.dataset.pick, text: result.text, origin: { seed: c.seed, design: c.design } } });
-        toast(`${c.name} has a new fixed voice. Only this character's generated passages become outdated.`);
+        const fixed = await api("/api/voices/fix", { method: "POST", body: { role: c.name, path: b.dataset.pick, text: result.text, origin: { seed: c.seed, design: c.design } } });
+        toast(`${c.name} has a new fixed voice. Only this character's generated passages become outdated.${droppedTakes(fixed)}`);
         await viewCharacters();
       }, b));
     }, e.currentTarget);
+    bindEmotionTakes(card, c.name, viewCharacters);
     $("[data-unfix]", card)?.addEventListener("click", async () => {
       if (!await modal(`Unfix the voice for ${c.name}?`, "<p>This character will use the description again, which may vary between passages. Generated chapters will become Outdated.</p>",
         [{ label: "Cancel", value: false }, { label: "Unfix voice", value: true, primary: true }])) return;
@@ -935,7 +999,8 @@ async function viewNarrator() {
             <div class="row"><button class="btn" id="listen-fixed">${icon("play")} Hear it on the preview text</button><button class="btn ghost" id="unfix">Unfix voice</button></div></div>
           <div class="small muted">This approved reference voice is used throughout the book (${esc(data.fixed.date.slice(0, 10))}, ${data.fixed.seconds} s). The description and directions below are only used to audition a new voice.</div>
           <audio controls src="${esc(data.fixed.url)}" style="width:100%"></audio>
-          <div class="takes" id="fixed-takes"></div></div>`
+          <div class="takes" id="fixed-takes"></div>
+          ${emotionTakesHtml(data.fixed, data.emotion_samples, data.emotions)}</div>`
         : `<div class="banner" style="margin-bottom:16px">${icon("info")}<div><b>No reference voice yet:</b> passages may sound like different narrators. Compare takes and choose <b>“Fix voice”</b> on your favorite. A clear 15–20 second sample is a useful starting point.</div></div>`}
       <div class="card stack" id="narrator-presets" style="margin-bottom:16px">
         <div><h3>Ready-made narrator voices</h3><p class="small muted">Listen, then choose one to fix it for the whole book. Or describe your own voice below.</p></div>
@@ -964,8 +1029,8 @@ async function viewNarrator() {
     $$("#narrator-presets [data-preset]").forEach((b) => b.onclick = () => guard(async () => {
       if (data.fixed && !await modal("Replace the narrator voice?", "<p>The new voice is used for all narration. Generated chapters become Outdated and only the narrator's passages are regenerated.</p>",
         [{ label: "Cancel", value: false }, { label: "Use this voice", value: true, primary: true }])) return;
-      await api("/api/presets/apply", { method: "POST", body: { id: b.dataset.preset, role: NARRATOR } });
-      toast("The narrator voice is fixed and will be used throughout the book.");
+      const fixed = await api("/api/presets/apply", { method: "POST", body: { id: b.dataset.preset, role: NARRATOR } });
+      toast(`The narrator voice is fixed and will be used throughout the book.${droppedTakes(fixed)}`);
       viewNarrator();
     }, b));
     $$("[data-mode]").forEach((b) => b.onclick = () => { read(); n.mode = b.dataset.mode; draw(); });
@@ -979,9 +1044,9 @@ async function viewNarrator() {
         <button class="btn primary" data-fix="${esc(t.path)}" data-seed="${t.seed}">${icon("lock")} Fix voice</button></div>`).join("");
       $$("[data-fix]").forEach((b) => b.onclick = () => guard(async () => {
         n.seed = +b.dataset.seed;
-        await api("/api/voices/fix", { method: "POST", body: { role: "Narrator", path: b.dataset.fix, text: result.text, origin: { seed: n.seed, description: n.description, temperature: n.temperature } } });
+        const fixed = await api("/api/voices/fix", { method: "POST", body: { role: "Narrator", path: b.dataset.fix, text: result.text, origin: { seed: n.seed, description: n.description, temperature: n.temperature } } });
         await api("/api/settings", { method: "PUT", body: { settings: data.settings } });
-        toast(`Take ${n.seed} is now the narrator's fixed voice.`);
+        toast(`Take ${n.seed} is now the narrator's fixed voice.${droppedTakes(fixed)}`);
         viewNarrator();
       }, b));
       $("#takes audio")?.play();
@@ -991,6 +1056,7 @@ async function viewNarrator() {
       const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: sample, fixed: true } });
       $("#fixed-takes").innerHTML = `<div class="take"><b>Fixed voice</b><audio controls autoplay src="${result.takes[0].url}"></audio><span></span></div>`;
     }, e.currentTarget));
+    if (data.fixed) bindEmotionTakes($(".fixed-box"), "Narrator", viewNarrator);
     $("#unfix")?.addEventListener("click", async () => {
       if (!await modal("Unfix the narrator voice?", "<p>The narrator will use the description again and may vary between passages. Generated chapters will become Outdated.</p>",
         [{ label: "Cancel", value: false }, { label: "Unfix voice", value: true, primary: true }])) return;

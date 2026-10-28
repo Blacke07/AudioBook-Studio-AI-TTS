@@ -61,3 +61,32 @@ test('the chapter table has audio, video and listen buttons and chips that expla
   assert.match(source, /\["render", "export"\] : \["video"\]/);
   assert.match(style, /\.chip\.has-reason \{ cursor:help; \}/);
 });
+
+test('Gemma emotion proposals join the review queue; a speaker problem on the same line is named first', () => {
+  const rows = [{speaker: 'Ada', text: 'a', emotion_source: 'ai'}, {speaker: 'Unassigned', text: 'b', emotion_source: 'ai'},
+    {speaker: 'Ada', text: 'c', emotion_source: 'manual'}];
+  assert.deepEqual(reviewQueue(rows).map(item => [item.index, item.why]), [[0, 'Emotion'], [1, 'Unassigned']]);
+});
+
+test('each line has an emotion menu that saves the author choice and explains a missing take', () => {
+  assert.match(source, /<select data-emotion="\$\{index\}" aria-label="Emotion of this line"/);
+  assert.match(source, /api\("\/api\/chapter\/delivery", \{ method: "PUT", body: \{ volume, stem, row: index, emotion, source_hash: data\.source_hash \} \}\)/);
+  assert.match(source, /data-emotion-keep="\$\{index\}"/);
+  assert.match(source, /line\.emotion_missing \? `<span class="chip warn"/);
+  assert.match(source, /Some emotions use the neutral take\./);
+  assert.match(style, /\.emotion-pick\.quiet \{ opacity:\.45;/);
+  assert.match(style, /prefers-reduced-motion: reduce\) \{ \.emotion-pick\.quiet \{ transition:none; \} \}/);
+});
+
+test('a fixed voice lists every emotion with its approved take or the neutral fallback', () => {
+  const {emotionTakesHtml} = vm.runInNewContext(`const esc = s => String(s); const icon = () => ''; const fieldHelp = () => '';
+    ${extract('emotionTakesHtml')}\n({emotionTakesHtml})`);
+  const choices = [{key: 'neutral', label: 'Neutral'}, {key: 'angry', label: 'Angry'}, {key: 'tender', label: 'Tender'}];
+  const html = emotionTakesHtml({takes: {angry: {url: '/a.wav'}}}, {tender: 'Come closer.'}, choices);
+  assert.match(html, /Emotion takes · 1\/2/);
+  assert.doesNotMatch(html, /data-emotion-take="neutral"/);
+  assert.match(html, /data-emotion-take="angry"[\s\S]*Approved[\s\S]*src="\/a\.wav"[\s\S]*data-emotion-remove/);
+  assert.match(html, /data-emotion-take="tender"[\s\S]*Neutral take used[\s\S]*Come closer\./);
+  assert.match(source, /api\("\/api\/voices\/fix", \{ method: "POST", body: \{ role, path: take\.path, text: take\.text, emotion,/);
+  assert.match(source, /bindEmotionTakes\(\$\("\.fixed-box"\), "Narrator", viewNarrator\)/);
+});

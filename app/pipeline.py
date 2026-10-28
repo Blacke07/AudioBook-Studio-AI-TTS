@@ -40,7 +40,7 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
     entries = glossary.load()
     from character_registry import scoped_rows, register_analysis
     entries = scoped_rows(entries, chapter.volume)
-    proposals = {}
+    proposals, deliveries = {}, {}
     if use_ai and settings["multi_voice"]:
         with LOCK:
             close_engine()  # Gemma needs the GPU memory Qwen holds
@@ -49,7 +49,7 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
                                                                progress, release,
                                                                batch_size=REPAIR_BATCH if repair else BATCH, proposals=proposals,
                                                                volume=chapter.volume, chapter=chapter.stem,
-                                                               source_hash=project.text_hash(text))
+                                                               source_hash=project.text_hash(text), deliveries=deliveries)
             except AnalysisError as error:
                 project.write_json(chapter.work / "analysis-error.json",
                                    {**error.diagnostic, "source_hash": project.text_hash(text)})
@@ -67,10 +67,18 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
     rows = [[*row[:3], 0] for row in rows]
     from voice_rules import reconcile
     from spoken_text import reconcile as reconcile_spoken
-    chapter.save_script(reconcile_spoken(chapter.script(), reconcile(chapter.script(), {"source_hash": project.text_hash(text), "rows": rows, "report": report,
-                         "attribution": attribution,
-                         "speakers": speakers, "added": added, "ai": bool(use_ai and settings["multi_voice"]),
-                         "analyzed": datetime.now().isoformat(timespec="seconds")})))
+    import delivery
+    new = {"source_hash": project.text_hash(text), "rows": rows, "report": report, "attribution": attribution,
+           "speakers": speakers, "added": added, "ai": bool(use_ai and settings["multi_voice"]),
+           "analyzed": datetime.now().isoformat(timespec="seconds")}
+    if deliveries:
+        new["delivery"] = delivery.proposals(rows, deliveries)
+        proposed = len(new["delivery"]["lines"])
+        new["report"] += (f"\nGemma proposed an emotion for {proposed} of {len(deliveries)} dialogue lines; the others "
+                          "stay neutral. Review the proposals beside each line; your own choices are kept.")
+    old = chapter.script()
+    # Gemma's emotions are new proposals; the author's own choices are kept on their lines.
+    chapter.save_script(delivery.reconcile(old, reconcile_spoken(old, reconcile(old, new))))
     chapter.error_file.unlink(missing_ok=True)
     (chapter.work / "analysis-error.json").unlink(missing_ok=True)
     return rows, report, added

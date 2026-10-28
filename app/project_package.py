@@ -12,6 +12,7 @@ import zipfile
 
 import numpy as np
 import soundfile as sf
+from emotions import EMOTIONS, NEUTRAL
 import fixed_voices
 import glossary
 import project
@@ -127,6 +128,8 @@ def clean_script(data):
     validate_script(data)
     from spoken_text import validate
     validate(data)
+    from delivery import validate as validate_delivery
+    validate_delivery(data)
     attribution = data.get('attribution', {})
     if not isinstance(attribution, dict) or len(attribution) > 100000:
         raise ValueError('Invalid attribution metadata.')
@@ -138,7 +141,8 @@ def clean_script(data):
             raise ValueError('Invalid attribution metadata.')
     # Keep row text byte-for-byte at the string level; only known metadata is accepted.
     return {key:value for key,value in data.items() if key in
-            ('source_hash','rows','report','speakers','added','ai','analyzed','voice_rules','spoken_text','attribution')}
+            ('source_hash','rows','report','speakers','added','ai','analyzed','voice_rules','spoken_text','attribution',
+             'delivery')}
 
 
 def check_voice(entry, content):
@@ -164,6 +168,21 @@ def check_voice(entry, content):
         raise ValueError('Unreadable fixed voice WAV: '+str(error)) from error
     return {**{key:value for key,value in entry.items() if key in ('id','file','text','origin','date')},
             'seconds': round(seconds,2)}
+
+
+def check_takes(takes, files):
+    """The emotion takes of a fixed voice: each a known non-neutral emotion with its own valid WAV."""
+    if not isinstance(takes, dict) or not takes:
+        raise ValueError('Invalid emotion takes.')
+    checked = {}
+    for emotion, take in takes.items():
+        if emotion not in EMOTIONS or emotion == NEUTRAL or not isinstance(take, dict):
+            raise ValueError('Invalid emotion take: '+str(emotion))
+        filename = component(take.get('file'),255)
+        if not filename.endswith('.wav') or 'voices/'+filename not in files:
+            raise ValueError('Missing emotion take WAV: '+filename)
+        checked[emotion] = check_voice(take, files['voices/'+filename])
+    return checked
 
 
 @dataclass
@@ -253,6 +272,8 @@ def parse_files(files, ignored=()):
             if not filename.endswith('.wav') or 'voices/'+filename not in files:
                 raise ValueError('Missing fixed voice WAV: '+filename)
             registry[role] = check_voice(entry, files['voices/'+filename])
+            if 'takes' in entry:
+                registry[role]['takes'] = check_takes(entry['takes'], files)
         for role, value in samples.items():
             glossary.speaker_name(role, allow_reserved=True)
             if not isinstance(value,dict):
@@ -264,7 +285,10 @@ def parse_files(files, ignored=()):
                 raise ValueError('Invalid voice sample text.')
             if 'real' in value and (not isinstance(value['real'],list) or any(not isinstance(v,str) for v in value['real'])):
                 raise ValueError('Invalid voice sample lines.')
-        samples = {role:{k:v for k,v in value.items() if k in ('sample','serious','real')}
+            lines = value.get('emotions', {})
+            if not isinstance(lines,dict) or any(key not in EMOTIONS or not isinstance(line,str) for key,line in lines.items()):
+                raise ValueError('Invalid emotion sample lines.')
+        samples = {role:{k:v for k,v in value.items() if k in ('sample','serious','real','emotions')}
                    for role,value in samples.items() if role in roles}
     volumes, scripts = [], {}
     if 'volumes' in parts:
@@ -309,12 +333,13 @@ def collect(parts, snapshot=False):
         files['voices/registry.json'] = encoded(registry)
         samples = {role:entry for role,entry in fixed_voices.samples().items() if role in active}
         if not snapshot:
-            samples = {role:{key:value for key,value in entry.items() if key in ('sample','serious')}
+            samples = {role:{key:value for key,value in entry.items() if key in ('sample','serious','emotions')}
                        for role,entry in samples.items()}
         files['voices/samples.json'] = encoded(samples)
         for entry in registry.values():
-            filename = component(entry['file'],255)
-            files['voices/'+filename] = (fixed_voices.FOLDER/filename).read_bytes()
+            for filename in fixed_voices.files(entry):
+                filename = component(filename,255)
+                files['voices/'+filename] = (fixed_voices.FOLDER/filename).read_bytes()
     if 'volumes' in parts:
         volumes = project.volumes()
         files['volumes.json'] = encoded(volumes)

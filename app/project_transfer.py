@@ -47,8 +47,9 @@ def capture():
         if file.is_file():
             result[name] = file.read_bytes()
     for entry in fixed_voices.load().values():
-        name = 'voices/'+package.component(entry['file'],255)
-        result[name] = target(name).read_bytes()
+        for filename in fixed_voices.files(entry):
+            name = 'voices/'+package.component(filename,255)
+            result[name] = target(name).read_bytes()
     for volume in project.volumes():
         folder = project.WORK/package.component(volume['name'])
         for file in folder.glob('*/script.json'):
@@ -271,13 +272,14 @@ def plan(incoming, choices):
             if role in registry and role not in choices.get('voices',[]):
                 row('voice',role,'skip','Keep mine',conflict=True)
                 continue
-            filename = 'voices/'+entry['file']
-            content = incoming.files[filename]
-            file = target(filename)
-            if file.exists() and file.read_bytes()!=content:
-                raise ValueError('A different reference WAV already uses this filename: '+entry['file'])
-            if not file.exists():
-                writes[filename] = content
+            for name in fixed_voices.files(entry):
+                filename = 'voices/'+name
+                content = incoming.files[filename]
+                file = target(filename)
+                if file.exists() and file.read_bytes()!=content:
+                    raise ValueError('A different reference WAV already uses this filename: '+name)
+                if not file.exists():
+                    writes[filename] = content
             row('voice',role,'update' if role in registry else 'add',conflict=role in registry)
             registry[role] = entry
             changed_roles.add(role)
