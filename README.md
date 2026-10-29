@@ -137,6 +137,8 @@ Use **Edit spoken text** beside a prepared line to adjust the version sent to th
 
 With character voices enabled, **Audition line** previews the actual spoken passage using its saved reading voice, spoken-text edits and available emotional reference. **Compare another take** auditions an alternative; **Use this take** explicitly selects it. Generate the chapter afterwards to assemble the audio, reusing the selected preview. If an emotional reference is missing, the preview clearly reports that neutral delivery is used.
 
+In **Emotion takes**, enter an exact **Seed (take number)** or choose **Use neutral seed**. These numbers select sampling variants, not emotion intensity or voice similarity. Emotional auditions use the saved reference description when available; they recreate a voice rather than clone the neutral recording. Compare both recordings before approving a take.
+
 Reanalysis, splitting or speaker changes retain unmatched voice/text overrides for review instead of silently applying them to another line.
 
 ## Project import and export

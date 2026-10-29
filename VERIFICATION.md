@@ -15,6 +15,7 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 ## Checks performed
 
 - Line auditions: synthetic tests cover reading overrides, spoken edits, emotional references, stale-selection rejection, explicit variant selection and reuse of the heard passage cache. Browser checks cover comparison, selection and closing without a change. Real-model listening quality and cold-start latency for this feature have not been measured.
+- Emotional-reference auditions: tests cover exact manual seeds (including zero), invalid-input rejection, saved-description precedence, seed reset and approval of the heard seed. These auditions do not condition on the neutral audio; keeping a seed or description does not guarantee the same perceived speaker.
 
 - Application, installer, uninstaller, archive validation and UI helper tests.
 - Local server Host/Origin restrictions, model hashes, safe archive extraction and process ownership.

@@ -14,6 +14,7 @@ import uvicorn
 
 import delivery
 import emotions
+import emotion_audition
 import export
 import fixed_voices
 import glossary
@@ -560,8 +561,8 @@ def unfix_voice(data: dict = Body(...)):
 
 @app.post("/api/voices/emotion-preview")
 def emotion_preview(data: dict = Body(...)):
-    """An audition take of a fixed role for one emotion: the role's description voice with the emotion's
-    instruction, on the seed of its approved neutral take, compared with that take's voice fingerprint."""
+    """Recreate an emotional take using the saved reference description and an explicitly chosen seed.
+    Compare its fingerprint with the neutral recording; this is design synthesis, not reference cloning."""
     settings = project.load_settings()
     role = str(data["role"]).strip()
     emotion = emotions.check(data.get("emotion"))
@@ -578,15 +579,14 @@ def emotion_preview(data: dict = Body(...)):
             raise ValueError(f"{role} is not in the character glossary.")
         recipe = read_cast([row], MODEL_NAMES[settings["narrator"]["mode"]], narrator_voice(settings), {role},
                            use_fixed=False)[role]
+    voice = emotion_audition.prepare_voice(recipe, fixed, emotion, data.get('seed'))
     text = " ".join(str(data.get("text") or "").split())[:600] or fixed_voices.emotion_sample(role, emotion)
     fixed_voices.set_emotion_sample(role, emotion, text)
-    seed = int((fixed.get("origin") or {}).get("seed", recipe.seed)) + int(data.get("variant", 0))
-    voice = Voice(recipe.speaker, recipe.description,
-                  f"{recipe.instructions} {emotions.instruction(emotion)}".strip(), seed, recipe.mode)
     target = preview_voice(voice, text, settings["narrator"]["temperature"])
     score = voice_check.closeness(target, fixed_voices.FOLDER / fixed["file"]) if voice_check.available() else None
     return {"url": _url(target), "path": str(target.relative_to(project.ROOT)).replace("\\", "/"), "text": text,
-            "seed": seed, "same_voice": None if score is None else round(score, 2)}
+            "seed": voice.seed, "same_voice": None if score is None else round(score, 2),
+            "recipe_source": "saved reference description" if (fixed.get('origin') or {}).get('design') else "current voice recipe"}
 
 
 @app.get("/api/characters")

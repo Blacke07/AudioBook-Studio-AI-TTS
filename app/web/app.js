@@ -792,7 +792,7 @@ function bindFieldHelp(root) {
 
 /* Emotion takes of a fixed voice: Base clones an approved recording and takes no instructions, so each emotion
    needs its own approved take of the same voice. Without one, lines with that emotion use the neutral take. */
-function emotionTakesHtml(fixed, samples, choices) {
+function emotionTakesHtml(fixed, samples, choices, recipeSeed) {
   const keys = (choices || []).filter((e) => e.key !== "neutral");
   const approved = keys.filter((e) => fixed.takes?.[e.key]).length;
   return `<details class="character-section" data-emotion-takes><summary>Emotion takes · ${approved}/${keys.length} ${fieldHelp("Emotion takes", "A fixed voice clones its approved recording and takes no delivery instructions. Approve a separate take of the same voice for each emotion you use; lines with that emotion clone it. Without one, those lines use the neutral take.")}</summary>
@@ -802,7 +802,10 @@ function emotionTakesHtml(fixed, samples, choices) {
         <div class="row between"><b>${esc(e.label)}</b>${take ? `<span class="chip ok">${icon("check")} Approved</span>` : `<span class="chip">Neutral take used</span>`}</div>
         ${take ? `<audio controls preload="none" src="${esc(take.url)}"></audio>` : ""}
         <textarea data-emotion-text rows="2" aria-label="${esc(e.label)} audition line">${esc(samples?.[e.key] || "")}</textarea>
-        <div class="row"><button type="button" class="btn small" data-emotion-audition>${icon("play")} Audition</button>${take ? `<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>` : ""}</div>
+        <div class="row emotion-seed-controls"><label class="field"><span>Seed (take number)</span><input type="number" min="0" max="2147483647" step="1" required data-emotion-seed data-neutral-seed="${esc(fixed.origin?.seed ?? recipeSeed ?? '')}" value="${esc(take?.origin?.seed ?? fixed.origin?.seed ?? recipeSeed ?? '')}" aria-label="${esc(e.label)} seed"></label><button type="button" class="btn ghost small" data-emotion-reset>Use neutral seed</button></div>
+        <p class="small muted">Choose an exact take number. This is not emotion intensity; nearby numbers do not mean more similar voices.</p>
+        <details class="small"><summary>Compare with neutral voice</summary><audio controls preload="none" src="${esc(fixed.url || '')}"></audio></details>
+        <div class="row"><button type="button" class="btn small" data-emotion-audition>${icon("play")} Audition this seed</button>${take ? `<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>` : ""}</div>
         <div data-emotion-result></div></div>`;
     }).join("")}</div></details>`;
 }
@@ -813,14 +816,24 @@ function bindEmotionTakes(root, role, refresh) {
   $$("[data-emotion-take]", root).forEach((box) => {
     const emotion = box.dataset.emotionTake;
     const label = $("b", box).textContent;
-    let variant = 0;
+    const seedInput = $("[data-emotion-seed]", box);
+    $("[data-emotion-reset]", box).onclick = () => { seedInput.value = seedInput.dataset.neutralSeed; seedInput.focus(); };
     const audition = (button) => guard(async () => {
-      const take = await api("/api/voices/emotion-preview", { method: "POST", body: { role, emotion, text: $("[data-emotion-text]", box).value, variant } });
-      const same = take.same_voice == null ? "" : `Similarity to the neutral take: <b>${take.same_voice.toFixed(2)}</b> (1 = identical).`;
+      if (!seedInput.reportValidity()) return;
+      const seed = Number(seedInput.value);
+      if (!Number.isInteger(seed)) return;
+      const take = await api("/api/voices/emotion-preview", { method: "POST", body: { role, emotion, text: $("[data-emotion-text]", box).value, seed } });
+      const same = take.same_voice == null ? "Voice similarity could not be measured." : `Voice fingerprint similarity: <b>${take.same_voice.toFixed(2)}</b> (not a percentage).${take.same_voice < 0 ? ' Very low similarity; this may sound like a different person.' : ''}`;
+      $$("audio", box).forEach((audio) => audio.pause());
       $("[data-emotion-result]", box).innerHTML = `<div class="take"><b>Take ${take.seed}</b><audio controls autoplay src="${esc(take.url)}"></audio>
         <div class="row"><button type="button" class="btn primary small" data-emotion-fix>${icon("lock")} Approve take</button><button type="button" class="btn ghost small" data-emotion-again>${icon("dice")} Another take</button></div>
-        <div class="small muted" style="grid-column:1/-1">${same} Listen for the same person in a ${esc(label.toLowerCase())} delivery.</div></div>`;
-      $("[data-emotion-again]", box).onclick = (event) => { variant += 1; audition(event.currentTarget); };
+        <div class="small muted" style="grid-column:1/-1">${same} Listen for the same person in a ${esc(label.toLowerCase())} delivery. Recreated from ${esc(take.recipe_source)}; this preview does not clone the neutral recording.</div></div>`;
+      seedInput.value = take.seed;
+      $("[data-emotion-again]", box).onclick = (event) => {
+        if (!seedInput.reportValidity()) return;
+        seedInput.value = Number(seedInput.value) + 1;
+        audition(event.currentTarget);
+      };
       $("[data-emotion-fix]", box).onclick = (event) => guard(async () => {
         await api("/api/voices/fix", { method: "POST", body: { role, path: take.path, text: take.text, emotion, origin: { seed: take.seed, emotion } } });
         toast(`${label} take approved for ${role}. Lines with this emotion become outdated and use it.`);
@@ -876,7 +889,7 @@ function drawCharacters() {
         ${c.fixed ? `<div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
           ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
           <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>
-          ${emotionTakesHtml(c.fixed, c.emotion_samples, d.emotions)}` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
+          ${emotionTakesHtml(c.fixed, c.emotion_samples, d.emotions, c.seed)}` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
         <div class="small muted">Shared performance variation ${fieldHelp('Shared performance variation','The Narrator page sets one temperature for all voices, including characters. Each character has a separate seed. This does not change the fixed reference.')}<a href="#/narrator">Narrator settings</a></div>
         <details class="character-section"><summary>Speaker detection</summary>
           <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
@@ -1002,7 +1015,7 @@ async function viewNarrator() {
           <div class="small muted">This approved reference voice is used throughout the book (${esc(data.fixed.date.slice(0, 10))}, ${data.fixed.seconds} s). The description and directions below are only used to audition a new voice.</div>
           <audio controls src="${esc(data.fixed.url)}" style="width:100%"></audio>
           <div class="takes" id="fixed-takes"></div>
-          ${emotionTakesHtml(data.fixed, data.emotion_samples, data.emotions)}</div>`
+          ${emotionTakesHtml(data.fixed, data.emotion_samples, data.emotions, n.seed)}</div>`
         : `<div class="banner" style="margin-bottom:16px">${icon("info")}<div><b>No reference voice yet:</b> passages may sound like different narrators. Compare takes and choose <b>“Fix voice”</b> on your favorite. A clear 15–20 second sample is a useful starting point.</div></div>`}
       <div class="card stack" id="narrator-presets" style="margin-bottom:16px">
         <div><h3>Ready-made narrator voices</h3><p class="small muted">Listen, then choose one to fix it for the whole book. Or describe your own voice below.</p></div>

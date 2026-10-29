@@ -491,3 +491,7 @@ td.row-tools { white-space:nowrap; }
 .emotion-takes { display:grid; gap:10px; }
 .emotion-take { display:grid; gap:6px; padding:10px; border:1px solid var(--line); border-radius:9px; }
 .emotion-take audio { width:100%; }
+.emotion-seed-controls { align-items:flex-end; flex-wrap:wrap; }
+.emotion-seed-controls .field { flex:0 1 190px; min-width:150px; }
+.emotion-take .take { grid-template-columns:minmax(0,1fr); }
+.emotion-take .take .row { flex-wrap:wrap; }
