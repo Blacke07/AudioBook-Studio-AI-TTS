@@ -482,9 +482,10 @@ async function viewChapter(volume, stem, after = {}) {
             <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.speaker)}</button>`}</div>
             <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.basis === "context" ? ` <span class="chip" title="Speaker inferred from narrative context; review this line.">context</span>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}${emotionPick(line, index)}</div>
             <div class="tools">
-              ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play from here">${icon("play")}</button>` : ""}
+              ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play saved chapter from here">${icon("play")}</button>` : ""}
               ${![PAUSE,UNASSIGNED].includes(line.speaker) ? `<button type="button" class="btn small reading-voice" data-voice-rule="${index}" title="Edit the reading voice for this line">Voice: ${esc(line.read_as || line.speaker)}</button>` : ""}
               ${line.speaker !== PAUSE ? `<button class="btn small" data-edit-spoken="${index}" ${data.manual_draft ? "disabled" : ""} title="Edit the spoken version without changing the manuscript">Edit spoken text</button>` : ""}
+              ${LineAudition.trigger(line, index, data)}
               ${line.speaker !== PAUSE ? `<button class="btn ghost icon-only" data-split="${index}" title="Split the line, for example at a speech tag">${icon("scissors")}</button>` : ""}
               ${line.start != null ? `<button class="btn ghost icon-only" data-variant="${index}" title="Generate another take of this line">${icon("redo")}</button>` : ""}
             </div></div>`).join("")}</div>`
@@ -522,6 +523,7 @@ async function viewChapter(volume, stem, after = {}) {
   };
   VoiceRules.bindChapter(volume, stem, data);
   SpokenText.bind(volume, stem, data);
+  LineAudition.bind(volume, stem, data, (row) => viewChapter(volume, stem, {focus: row}));
   const rows = () => lines.map((l) => [l.speaker, l.text, l.joined, l.variant]);
   $("#save-manual")?.addEventListener("click", e => guard(() => save(rows(), "Manual assignments saved. Resolve remaining unassigned speakers before generating audio."), e.currentTarget));
   $$("[data-who]").forEach((button) => button.onclick = (event) => {

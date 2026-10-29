@@ -47,6 +47,8 @@ app.include_router(create_router(worker, lambda:project_access))
 app.include_router(voice_rules_router(worker))
 from character_registry_api import create_router as registry_router
 app.include_router(registry_router(worker))
+from line_audition_api import create_router as line_audition_router
+app.include_router(line_audition_router(worker))
 
 
 @app.exception_handler(ValueError)
@@ -311,6 +313,7 @@ def chapter(volume: str, stem: str):
             blockers.append({"name": name, "label": metadata["label"], "status": metadata["status"]})
     return {"chapter": info, "lines": lines, "report": script["report"],
             "manual_draft": manual_draft, "source_hash": script["source_hash"],
+            "script_revision": voice_rules.digest(script), "audition_enabled": settings['multi_voice'],
             "voice_rules":script.get("voice_rules",{}), "voice_error":voice_error,
             "spoken_error":spoken_error, "spoken_conflicts":script.get("spoken_text",{}).get("conflicts",[]),
             "delivery_error": delivery_error, "emotions": emotions.choices(),

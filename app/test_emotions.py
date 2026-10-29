@@ -77,7 +77,9 @@ class EmotionTests(unittest.TestCase):
         self.assertEqual((voice.speaker, heard, voice.instructions), (take['id'], True, ''))
         self.assertEqual(voices['Ada'].speaker, neutral['id'])
         self.assertNotEqual(after[0], keys[0])
-        self.assertEqual(after[1:], keys[1:])
+        self.assertEqual(len(chunks), 2, 'A distinct emotional take must not absorb the following neutral line')
+        self.assertEqual(chunks[1].text, 'It is our only light.')
+        self.assertEqual(conversion.delivered(chunks[1], voices['Ada'])[0].speaker, neutral['id'])
         self.assertEqual(fixed_voices.reference(take['id'])[1], 'A whispered reference line that is long enough.')
 
     def test_emotion_takes_need_the_neutral_voice_and_go_with_it(self):

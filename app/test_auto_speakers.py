@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import glossary
+import auto_speakers as speakers
 from auto_speakers import context_window, release_model, validate_assignments
 from dialogue import NARRATOR, PAUSE, UNASSIGNED, prepare_script
 
@@ -85,6 +86,84 @@ class AttributionTests(unittest.TestCase):
         rows = prepare_script(text, aliases=lambda scene: {'the keeper': 'Ada' if scene == 0 else 'Morgan'})
         speakers = [row[0] for row in rows if row[0] not in (NARRATOR, PAUSE)]
         self.assertEqual(speakers, ['Ada', 'Morgan'])
+
+
+class ContextBatchTests(unittest.TestCase):
+    def test_distant_dialogue_is_split_without_losing_or_rewriting_requested_rows(self):
+        rows = [[UNASSIGNED, '— Wait.'], [NARRATOR, 'Invented narration. ' * 900],
+                [UNASSIGNED, '— Why?']]
+        batches = speakers.analysis_batches(rows, [0, 2], speakers.BATCH)
+        self.assertEqual(batches, [[0], [2]])
+        for ids in batches:
+            records = context_window(rows, ids)
+            self.assertLessEqual(len(json.dumps(records, ensure_ascii=False)), speakers.MAX_CONTEXT_CHARS)
+            self.assertEqual({r['id']: r['text'] for r in records if r['id'] in ids},
+                             {i: rows[i][1] for i in ids})
+
+    def test_large_optional_neighbors_do_not_block_a_short_dialogue(self):
+        for before in (True, False):
+            with self.subTest(before=before):
+                long_row = [NARRATOR, 'Invented narration. ' * 900]
+                target = [UNASSIGNED, '— A short answer.']
+                rows = [long_row, target] if before else [target, long_row]
+                index = 1 if before else 0
+                records = context_window(rows, [index])
+                self.assertEqual(records, [dict(id=index, kind='dialogue', speaker=None, text=target[1])])
+
+    def test_batches_and_context_do_not_cross_a_scene_break(self):
+        rows = [[UNASSIGNED, '— Wait.'], [PAUSE, '❦'], [UNASSIGNED, '— Why?']]
+        self.assertEqual(speakers.analysis_batches(rows, [0, 2], speakers.BATCH), [[0], [2]])
+        self.assertEqual([r['id'] for r in context_window(rows, [0])], [0])
+        self.assertEqual([r['id'] for r in context_window(rows, [2])], [2])
+
+    def test_batch_size_and_original_row_ids_are_preserved(self):
+        rows = [[UNASSIGNED, f'— Invented line {i}.'] for i in range(8)]
+        self.assertEqual(speakers.analysis_batches(rows, list(range(8)), speakers.REPAIR_BATCH),
+                         [[0, 1, 2], [3, 4, 5], [6, 7]])
+        self.assertEqual(speakers.analysis_batches(rows, [], speakers.BATCH), [])
+
+    def test_one_oversized_requested_row_fails_before_loading_the_model(self):
+        text = '— ' + 'An invented sentence. ' * 900
+        with patch.object(speakers, 'ensure_ollama') as ensure, patch.object(speakers, 'request') as request:
+            with self.assertRaisesRegex(ValueError, 'row 1.*Split'):
+                speakers.attribute(text, [], 'VoiceDesign', lambda *a, **k: None)
+        ensure.assert_not_called()
+        request.assert_not_called()
+
+    def test_full_analysis_and_emotion_analysis_cover_sparse_rows_once(self):
+        text = '<Hold.>\n\n' + 'Invented narration. ' * 900 + '\n\n— Why?\n\n' + \
+               'More invented narration. ' * 900 + '\n\n— Wait.'
+        original = prepare_script(text)
+        unknown = [i for i, row in enumerate(original) if row[0] == UNASSIGNED]
+        for with_delivery in (False, True):
+            with self.subTest(with_delivery=with_delivery):
+                calls = []
+                deliveries = {} if with_delivery else None
+                def response(path, data, timeout):
+                    content = json.loads(data['messages'][1]['content'])
+                    calls.append(content)
+                    self.assertLessEqual(len(json.dumps(content['context'], ensure_ascii=False)),
+                                         speakers.MAX_CONTEXT_CHARS)
+                    result = {'assignments': [dict(id=i, speaker=None, gender='unknown', basis='unclear',
+                                                   reason='Insufficient evidence.')
+                                              for i in content['requested_ids']]}
+                    if 'delivery_ids' in content:
+                        result['deliveries'] = [dict(id=i, delivery='neutral') for i in content['delivery_ids']]
+                    return {'message': {'content': json.dumps(result)}, 'done_reason': 'stop'}
+                with patch.object(speakers, 'ensure_ollama'), \
+                        patch.object(speakers, 'request', side_effect=response), \
+                        patch.object(speakers, 'release_model') as release, \
+                        patch('character_registry.document', return_value={'version': 2, 'characters': []}):
+                    result = speakers.attribute(text, [], 'VoiceDesign', lambda *a, **k: None,
+                                                deliveries=deliveries)
+                self.assertEqual([i for call in calls for i in call['requested_ids']], unknown)
+                self.assertEqual(result[0], original)
+                self.assertEqual(result[1], text)
+                if with_delivery:
+                    expected = [i for i, row in enumerate(original) if row[0] not in (NARRATOR, PAUSE)]
+                    self.assertEqual([i for call in calls for i in call['delivery_ids']], expected)
+                    self.assertEqual(sorted(deliveries), expected)
+                release.assert_called_once()
 
 
 class GlossaryTests(unittest.TestCase):

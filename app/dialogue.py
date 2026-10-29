@@ -269,6 +269,11 @@ def drop_simple_tags(lines, fixed_roles):
     """Leave out plain speech tags after a character whose fixed voice already tells the listener who speaks.
     The speech on both sides of the tag becomes one line, so it is read in one breath. Returns the new
     lines and the script rows that are no longer read."""
+    def take_id(line):
+        role = line.voice_role or line.role
+        take = fixed_voices.take(role, line.emotion or 'neutral') or fixed_voices.get(role)
+        return take['id'] if take else None
+
     result, dropped = [], set()
     index = 0
     while index < len(lines):
@@ -278,7 +283,7 @@ def drop_simple_tags(lines, fixed_roles):
                 and (fixed_roles(before) if callable(fixed_roles) else before.role in fixed_roles) and before.role != NARRATOR):
             dropped.add(line.row)
             after = lines[index + 1] if index + 1 < len(lines) else None
-            if (after and after.joined and after.role == before.role
+            if (after and after.joined and after.role == before.role and take_id(after) == take_id(before)
                     and (after.voice_role or after.role) == (before.voice_role or before.role)):
                 first = before.text
                 if first.endswith(",") and after.text[:1].isupper():

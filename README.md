@@ -135,6 +135,8 @@ Use **Edit spoken text** beside a prepared line to adjust the version sent to th
 
 **Suggest punctuation cleanup** only adjusts dialogue punctuation spacing and repeated `!` or `?`. It does not infer emotions or rewrite sentences. Punctuation can influence delivery, but does not guarantee a particular intonation. Listen after regeneration.
 
+With character voices enabled, **Audition line** previews the actual spoken passage using its saved reading voice, spoken-text edits and available emotional reference. **Compare another take** auditions an alternative; **Use this take** explicitly selects it. Generate the chapter afterwards to assemble the audio, reusing the selected preview. If an emotional reference is missing, the preview clearly reports that neutral delivery is used.
+
 Reanalysis, splitting or speaker changes retain unmatched voice/text overrides for review instead of silently applying them to another line.
 
 ## Project import and export

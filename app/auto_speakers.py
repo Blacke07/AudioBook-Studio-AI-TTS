@@ -15,6 +15,7 @@ MODEL = model_profile.CURRENT["gemma"]
 BATCH = 12
 REPAIR_BATCH = 3
 CONTEXT_CHARS = 6000
+MAX_CONTEXT_CHARS = 12000
 SCHEMA = {
     "type": "object", "properties": {
         "assignments": {"type": "array", "items": {
@@ -178,22 +179,64 @@ def validate_deliveries(items, ids):
     return result
 
 
+def _context_record(rows, index):
+    role, text = rows[index][:2]
+    return dict(id=index, kind="narration" if role in (NARRATOR, PAUSE) else "dialogue",
+                speaker=None if role in (NARRATOR, PAUSE, UNASSIGNED) else role, text=text)
+
+
+def _context_cost(record):
+    # With json.dumps' default separators, sum(record size + 2) is the exact nonempty list size.
+    return len(json.dumps(record, ensure_ascii=False)) + 2
+
+
+def analysis_batches(rows, ids, batch_size):
+    """Keep row IDs intact; bound each requested span by size, scene and maximum task count."""
+    costs = [0]
+    for index in range(len(rows)):
+        costs.append(costs[-1] + _context_cost(_context_record(rows, index)))
+    batches, batch = [], []
+    for index in ids:
+        if costs[index + 1] - costs[index] > MAX_CONTEXT_CHARS:
+            raise ValueError(f"Text row {index + 1} is too long for one analysis request. "
+                             "Split that row in the manual text editor before analyzing it.")
+        if batch and (len(batch) == batch_size
+                      or costs[index + 1] - costs[batch[0]] > MAX_CONTEXT_CHARS
+                      or any(rows[i][0] == PAUSE for i in range(batch[-1] + 1, index))):
+            batches.append(batch)
+            batch = []
+        batch.append(index)
+    if batch:
+        batches.append(batch)
+    return batches
+
+
 def context_window(rows, ids):
-    """The scene before the requested rows (up to CONTEXT_CHARS, stopping at a scene break) and 3 rows after."""
-    left, size = ids[0], 0
-    while left > 0 and rows[left - 1][0] != PAUSE and (size < CONTEXT_CHARS or ids[0] - left < 3):
+    """Keep requested rows whole, then fit nearby scene context within the existing budget."""
+    records = [_context_record(rows, i) for i in range(ids[0], ids[-1] + 1)]
+    size = sum(_context_cost(record) for record in records)
+    if size > MAX_CONTEXT_CHARS:
+        raise ValueError("The requested rows exceed the analysis context budget. Use smaller analysis batches.")
+    left, before_size = ids[0], 0
+    while left > 0 and rows[left - 1][0] != PAUSE and (before_size < CONTEXT_CHARS or ids[0] - left < 3):
+        record = _context_record(rows, left - 1)
+        cost = _context_cost(record)
+        if size + cost > MAX_CONTEXT_CHARS:
+            break
+        records.insert(0, record)
+        size += cost
         left -= 1
-        size += len(rows[left][1])
-    right = min(len(rows), ids[-1] + 4)
-    while True:
-        records = [{"id": i, "kind": "narration" if rows[i][0] in (NARRATOR, PAUSE) else "dialogue",
-                    "speaker": None if rows[i][0] in (NARRATOR, PAUSE, UNASSIGNED) else rows[i][0],
-                    "text": rows[i][1]} for i in range(left, right)]
-        if len(json.dumps(records, ensure_ascii=False)) <= 12000:
-            return records
-        if left >= ids[0]:
-            raise ValueError("The context is too long. Analyze a shorter scene.")
-        left += 1
+        before_size += len(record['text'])
+    for index in range(ids[-1] + 1, min(len(rows), ids[-1] + 4)):
+        if rows[index][0] == PAUSE:
+            break
+        record = _context_record(rows, index)
+        cost = _context_cost(record)
+        if size + cost > MAX_CONTEXT_CHARS:
+            break
+        records.append(record)
+        size += cost
+    return records
 
 
 UNNAMED_RE = re.compile(r"^(?:(?:a|an|another|some)\s+(?:\w+\s+)?(?:voice|man|woman|stranger|figure|boy|girl)|"
@@ -280,7 +323,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         ids = [i for i, row in enumerate(rows) if row[0] not in (NARRATOR, PAUSE)]
     known = list(dict.fromkeys([*genders, *(row[0] for row in rows if row[0] not in (NARRATOR, PAUSE, UNASSIGNED))]))
     assignments = []
-    batches = [ids[i:i + batch_size] for i in range(0, len(ids), batch_size)]
+    batches = analysis_batches(rows, ids, batch_size)
     if batches:
         ensure_ollama()
     allowed = {}
