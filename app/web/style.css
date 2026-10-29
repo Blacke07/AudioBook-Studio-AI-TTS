@@ -389,7 +389,7 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 .field-help { display: inline-flex; position: relative; vertical-align: middle; }
 .help-trigger { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 3px 5px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: .85rem; cursor: help; }
 .help-trigger:hover, .help-trigger:focus-visible { color: var(--ink); border-color: var(--accent); }
-.help-content { display: none; position: absolute; bottom: 100%; right: 0; width: 29ch; max-width: 70vw; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); z-index: 70; font-size: .9rem; font-weight: normal; line-height: 1.45; white-space: normal; }
+.help-content { display: none; position: fixed; left: 0; top: 0; width: 29ch; max-width: 70vw; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); z-index: 70; font-size: .9rem; font-weight: normal; line-height: 1.45; white-space: normal; }
 .field-help:hover .help-content, .field-help:focus-within .help-content { display: block; }
 .field-help.dismissed .help-content { display: none; }
 

@@ -43,9 +43,12 @@ test('character template folds detection and creation, preserving all wired fiel
 test('help is keyboard-focusable, described and dismissible without losing focus',()=>{
  const s={icon:()=>''};vm.runInNewContext(esc+'\n'+helper+'\nhtml=fieldHelp("Seed","A <take>");',s);
  assert.match(s.html,/type="button"/);assert.match(s.html,/aria-describedby="field-help-1"/);assert.match(s.html,/role="tooltip" id="field-help-1"/);assert.match(s.html,/A &lt;take&gt;/);
- let dismissed=false;const button={};const tip={querySelector:()=>button,classList:{add:()=>dismissed=true,remove:()=>dismissed=false}};
- s.root={querySelectorAll:()=>[tip]};vm.runInNewContext('bindFieldHelp(root)',s);
+ let dismissed=false;const box={style:{},offsetWidth:200,offsetHeight:80};
+ const button={getBoundingClientRect:()=>({top:300,bottom:328,right:260})};
+ const tip={querySelector:selector=>selector==='button'?button:box,classList:{add:()=>dismissed=true,remove:()=>dismissed=false}};
+ Object.assign(s,{innerWidth:400,innerHeight:700,root:{querySelectorAll:()=>[tip]}});vm.runInNewContext('bindFieldHelp(root)',s);
  button.onkeydown({key:'Escape',stopPropagation(){}});assert.equal(dismissed,true);button.onfocus();assert.equal(dismissed,false);
+ assert.equal(box.style.left,'60px','Focusing the button also places the note inside the window');
  assert.match(css,/.field-help:focus-within \.help-content/);
 });
 test('spoken editor escapes source text and requires preview before save',async()=>{

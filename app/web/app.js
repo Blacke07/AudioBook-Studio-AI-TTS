@@ -190,6 +190,10 @@ async function route() {
   location.hash = "#/";
 }
 window.addEventListener("hashchange", route);
+// Scrolling or resizing while a note is open keeps it beside its button.
+const replaceOpenHelp=()=>$$('.field-help:hover, .field-help:focus-within').forEach(placeFieldHelp);
+window.addEventListener('scroll', replaceOpenHelp, true);
+window.addEventListener('resize', replaceOpenHelp);
 
 /* ---------- volumes ---------- */
 async function viewVolumes() {
@@ -795,12 +799,24 @@ function fieldHelp(label, text, shortLabel = "") {
   const id='field-help-'+(++fieldHelpId);
   return `<span class="field-help"><button type="button" class="help-trigger" aria-label="Help: ${esc(label)}" aria-describedby="${id}">${shortLabel ? esc(shortLabel) : icon('info')}</button><span class="help-content" role="tooltip" id="${id}">${esc(text)}</span></span>`;
 }
+// The explanation is placed against the window, not its panel: a scrolling panel clips an absolutely
+// positioned note at its own edge, and a narrow window leaves less room than the note needs.
+function placeFieldHelp(tip) {
+  const box=tip.querySelector('.help-content'), anchor=tip.querySelector('button').getBoundingClientRect(), margin=8, gap=6;
+  box.style.left='0'; box.style.top='0'; box.style.maxWidth=`min(70vw, ${innerWidth-2*margin}px)`;
+  const width=box.offsetWidth, height=box.offsetHeight;
+  const left=Math.min(Math.max(margin, anchor.right-width), Math.max(margin, innerWidth-width-margin));
+  let top=anchor.top-height-gap;                       // above the button, as before
+  if (top<margin) top=anchor.bottom+gap;               // no room above: open below it
+  top=Math.min(top, Math.max(margin, innerHeight-height-margin));
+  box.style.left=left+'px'; box.style.top=top+'px';
+}
 function bindFieldHelp(root) {
   root.querySelectorAll('.field-help').forEach(tip=>{
     const button=tip.querySelector('button');
     button.onkeydown=e=>{if(e.key==='Escape'){tip.classList.add('dismissed');e.stopPropagation();}};
-    button.onfocus=()=>tip.classList.remove('dismissed');
-    tip.onmouseenter=()=>tip.classList.remove('dismissed');
+    button.onfocus=()=>{tip.classList.remove('dismissed'); placeFieldHelp(tip);};
+    tip.onmouseenter=()=>{tip.classList.remove('dismissed'); placeFieldHelp(tip);};
   });
 }
 
