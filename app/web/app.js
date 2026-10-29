@@ -160,6 +160,7 @@ const routes = [
   [/^#\/project$/, viewProject, "project"],
 ];
 async function route() {
+  VoiceStudio.capture(view);
   if (CharacterRegistry.dirty() && location.hash !== '#/characters' && !await CharacterRegistry.leave()) {
     location.hash = '#/characters'; return;
   }
@@ -770,9 +771,10 @@ async function showVoiceGuide(example = false) {
 
 let characterData = null, characterSaveTimer = null, characterSample = "", characterQuery = "";
 async function viewCharacters() {
+  VoiceStudio.capture(view);
   if (CharacterRegistry.tab === 'quick') return CharacterRegistry.show();
-  const [characters, similarity] = await Promise.all([api("/api/characters"), api("/api/voices/similarity")]);
-  characterData = { ...characters, similarity };
+  const [characters, similarity, registry] = await Promise.all([api("/api/characters"), api("/api/voices/similarity"), api('/api/character-registry')]);
+  characterData = { ...characters, similarity, registry };
   characterSample ||= characters.default_sample;
   drawCharacters();
 }
@@ -795,18 +797,19 @@ function bindFieldHelp(root) {
 function emotionTakesHtml(fixed, samples, choices, recipeSeed) {
   const keys = (choices || []).filter((e) => e.key !== "neutral");
   const approved = keys.filter((e) => fixed.takes?.[e.key]).length;
-  return `<details class="character-section" data-emotion-takes><summary>Emotion takes · ${approved}/${keys.length} ${fieldHelp("Emotion takes", "A fixed voice clones its approved recording and takes no delivery instructions. Approve a separate take of the same voice for each emotion you use; lines with that emotion clone it. Without one, those lines use the neutral take.")}</summary>
+  return `<details class="character-section" data-studio-section="emotions" data-emotion-takes><summary>Emotion takes · <span data-emotion-count>${approved}/${keys.length}</span> ${fieldHelp("Emotion takes", "A fixed voice clones its approved recording and takes no delivery instructions. Approve a separate take of the same voice for each emotion you use; lines with that emotion clone it. Without one, those lines use the neutral take.")}</summary>
     <div class="emotion-takes">${keys.map((e) => {
       const take = fixed.takes?.[e.key];
-      return `<div class="emotion-take" data-emotion-take="${e.key}">
-        <div class="row between"><b>${esc(e.label)}</b>${take ? `<span class="chip ok">${icon("check")} Approved</span>` : `<span class="chip">Neutral take used</span>`}</div>
-        ${take ? `<audio controls preload="none" src="${esc(take.url)}"></audio>` : ""}
+      return `<details class="emotion-take" data-emotion-take="${e.key}">
+        <summary><b>${esc(e.label)}</b><span class="chip ${take ? 'ok' : ''}" data-emotion-status>${take ? 'Approved' : 'Neutral take used'}</span></summary>
+        <p class="small fixed-status" data-emotion-feedback role="status" hidden></p>
+        ${take ? `<audio data-approved-emotion controls preload="none" src="${esc(take.url)}"></audio>` : ""}
         <textarea data-emotion-text rows="2" aria-label="${esc(e.label)} audition line">${esc(samples?.[e.key] || "")}</textarea>
         <div class="row emotion-seed-controls"><label class="field"><span>Seed (take number)</span><input type="number" min="0" max="2147483647" step="1" required data-emotion-seed data-neutral-seed="${esc(fixed.origin?.seed ?? recipeSeed ?? '')}" value="${esc(take?.origin?.seed ?? fixed.origin?.seed ?? recipeSeed ?? '')}" aria-label="${esc(e.label)} seed"></label><button type="button" class="btn ghost small" data-emotion-reset>Use neutral seed</button></div>
         <p class="small muted">Choose an exact take number. This is not emotion intensity; nearby numbers do not mean more similar voices.</p>
         <details class="small"><summary>Compare with neutral voice</summary><audio controls preload="none" src="${esc(fixed.url || '')}"></audio></details>
-        <div class="row"><button type="button" class="btn small" data-emotion-audition>${icon("play")} Audition this seed</button>${take ? `<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>` : ""}</div>
-        <div data-emotion-result></div></div>`;
+        <div class="row" data-emotion-actions><button type="button" class="btn small" data-emotion-audition>${icon("play")} Audition this seed</button>${take ? `<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>` : ""}</div>
+        <div data-emotion-result></div></details>`;
     }).join("")}</div></details>`;
 }
 /* A new neutral voice is another identity, so the server removes the emotion takes of the previous one. */
@@ -817,12 +820,37 @@ function bindEmotionTakes(root, role, refresh) {
     const emotion = box.dataset.emotionTake;
     const label = $("b", box).textContent;
     const seedInput = $("[data-emotion-seed]", box);
+    const update = async (fixed, approved) => {
+      const status = $('[data-emotion-status]', box);
+      status.textContent = approved ? 'Approved' : 'Neutral take used';
+      status.classList.toggle('ok', approved);
+      const section = box.closest('[data-emotion-takes]');
+      const total = $$('[data-emotion-take]', section).length;
+      $('[data-emotion-count]', section).textContent = `${Object.keys(fixed?.takes || {}).length}/${total}`;
+      const feedback = $('[data-emotion-feedback]', box);
+      feedback.hidden = false;
+      feedback.textContent = approved ? 'Take approved. Continue with another emotion.' : 'Take removed. Neutral delivery is used again.';
+      await refresh({role, fixed});
+    };
+    const bindRemove = (button) => button?.addEventListener('click', async () => {
+      if (!await modal(`Remove the ${label.toLowerCase()} take?`, `<p>Lines of ${esc(role)} with this emotion will use the neutral take again and become Outdated.</p>`,
+        [{ label: "Cancel", value: false }, { label: "Remove take", value: true, primary: true }])) return;
+      return guard(async () => {
+        const result = await api('/api/voices/unfix', {method:'POST', body:{role, emotion}});
+        $('[data-approved-emotion]', box)?.remove();
+        button.remove();
+        const approve = $('[data-emotion-fix]', box);
+        if (approve) { approve.disabled = false; approve.textContent = 'Approve take'; }
+        await update(result.fixed, false);
+      }, button);
+    });
     $("[data-emotion-reset]", box).onclick = () => { seedInput.value = seedInput.dataset.neutralSeed; seedInput.focus(); };
     const audition = (button) => guard(async () => {
       if (!seedInput.reportValidity()) return;
       const seed = Number(seedInput.value);
       if (!Number.isInteger(seed)) return;
       const take = await api("/api/voices/emotion-preview", { method: "POST", body: { role, emotion, text: $("[data-emotion-text]", box).value, seed } });
+      if (box.isConnected === false) return;
       const same = take.same_voice == null ? "Voice similarity could not be measured." : `Voice fingerprint similarity: <b>${take.same_voice.toFixed(2)}</b> (not a percentage).${take.same_voice < 0 ? ' Very low similarity; this may sound like a different person.' : ''}`;
       $$("audio", box).forEach((audio) => audio.pause());
       $("[data-emotion-result]", box).innerHTML = `<div class="take"><b>Take ${take.seed}</b><audio controls autoplay src="${esc(take.url)}"></audio>
@@ -834,25 +862,36 @@ function bindEmotionTakes(root, role, refresh) {
         seedInput.value = Number(seedInput.value) + 1;
         audition(event.currentTarget);
       };
-      $("[data-emotion-fix]", box).onclick = (event) => guard(async () => {
-        await api("/api/voices/fix", { method: "POST", body: { role, path: take.path, text: take.text, emotion, origin: { seed: take.seed, emotion } } });
+      $("[data-emotion-fix]", box).onclick = async (event) => {
+        const button = event.currentTarget;
+        const scroller = box.closest('#studio-editor') || box.ownerDocument?.scrollingElement;
+        const scrollTop = scroller?.scrollTop;
+        let approved = false;
+        await guard(async () => {
+        const result = await api("/api/voices/fix", { method: "POST", body: { role, path: take.path, text: take.text, emotion, origin: { seed: take.seed, emotion } } });
+        approved = true;
+        $('[data-approved-emotion]', box)?.remove();
+        if (!$('[data-emotion-remove]', box)) {
+          $('[data-emotion-actions]', box).insertAdjacentHTML('beforeend', '<button type="button" class="btn ghost small" data-emotion-remove>Remove take</button>');
+          bindRemove($('[data-emotion-remove]', box));
+        }
+        await update(result.fixed, true);
         toast(`${label} take approved for ${role}. Lines with this emotion become outdated and use it.`);
-        await refresh();
-      }, event.currentTarget);
+        }, button);
+        if (approved) { button.textContent = 'Approved'; button.disabled = true; }
+        if (scroller) scroller.scrollTop = scrollTop;
+      };
     }, button);
     $("[data-emotion-audition]", box).onclick = (event) => audition(event.currentTarget);
-    $("[data-emotion-remove]", box)?.addEventListener("click", async () => {
-      if (!await modal(`Remove the ${label.toLowerCase()} take?`, `<p>Lines of ${esc(role)} with this emotion will use the neutral take again and become Outdated.</p>`,
-        [{ label: "Cancel", value: false }, { label: "Remove take", value: true, primary: true }])) return;
-      guard(async () => { await api("/api/voices/unfix", { method: "POST", body: { role, emotion } }); await refresh(); });
-    });
+    bindRemove($('[data-emotion-remove]', box));
   });
 }
 
 function drawCharacters() {
+  VoiceStudio.capture(view);
   const d = characterData;
   const profileNames = (gender) => [...(d.profiles[gender] || []), ...(gender === "unknown" ? [] : d.profiles.unknown || []), ...d.profiles.narrator];
-  const visible = d.characters.map((c, i) => ({ c, i })).filter(({ c }) => !characterQuery || (c.name + " " + c.aliases + " " + c.note).toLowerCase().includes(characterQuery));
+  const selected = VoiceStudio.selection(d);
   const genderKey = { male: "male", female: "female", unknown: "unknown" };
   const pairs = d.similarity?.pairs || [];
   const confusable = pairs.filter((p) => p.score >= (d.similarity.confusable || 0.5));
@@ -861,41 +900,46 @@ function drawCharacters() {
     <div class="page-head"><div><h1>Your characters</h1>
       <p>Each character has an own reference voice. Reading rules can choose the narrator or another character without changing who speaks. Gender, aliases and context help identify speakers.</p></div>
       <button class="btn primary" id="new-character">${icon("plus")} New character</button></div>
-    <details class="card character-guide"><summary>About fixed voices and auditions</summary><div class="stack">
+    <div class="voice-studio-layout"><section class="voice-studio-browser" aria-label="Character browser">
+    <details class="card character-guide" data-studio-browser-section="guide"><summary>About fixed voices and auditions</summary><div class="stack">
       <div><b>Important: a preview should express the character's personality.</b>
         <p class="small">Build the voice sheet from the story, relationships and speaking style, then write the description and sample in English. A fixed reference also carries the sample's delivery.</p>
         <p class="small">Editing a description does not replace a fixed voice. Listen to a new take and fix it explicitly when you choose to change a voice. The guide does not change anything automatically.</p></div>
       <div class="row"><button class="btn small" id="voice-guide">Voice personality guide</button>
         <button class="btn small" id="voice-guide-example">View complete example</button></div>
     </div></details>
+    <details class="studio-checks" data-studio-browser-section="checks"><summary>Voice checks · ${d.duplicates.length + confusable.length} warnings</summary>
     ${d.duplicates.length ? `<div class="banner">${icon("flag")}<div><b>Identical voices:</b> ${d.duplicates.map((g) => esc(g.join(" and "))).join("; ")}. They may be hard to distinguish in the same scene.</div></div>` : ""}
     ${confusable.length ? `<div class="banner">${icon("flag")}<div><b>Similar fixed voices</b> (voice fingerprint, 1 = identical): ${confusable.map((p) => `${esc(p.a)} ↔ ${esc(p.b)} <b>${p.score.toFixed(2)}</b>`).join(" · ")}.
       For one of them, choose <b>“Find a more distinct voice”</b> to compare up to 3 new takes from the same description, ranked by their difference from the other voices.</div></div>` : ""}
-    <div class="card"><div class="grid two">
+    ${!d.duplicates.length && !confusable.length ? '<p class="small muted">No duplicate or similar fixed voices were flagged.</p>' : ''}</details>
+    <div class="studio-filters">
       <label class="field"><span>Search</span><input type="text" id="query" value="${esc(characterQuery)}" placeholder="name, alias or context"></label>
-      <label class="field"><span>Default preview for characters without their own sample</span><input type="text" id="sample" value="${esc(characterSample)}"></label>
-    </div></div>
-    ${visible.length ? "" : `<div class="empty">${d.characters.length ? "No characters match your search." : "No characters yet. Add your cast here, or analyze a chapter to discover speakers."}</div>`}
-    <div class="grid cards" style="margin-top:16px">${visible.map(({ c, i }) => {
+      <label class="field"><span>Volume</span><select id="studio-volume"><option value="all">All volumes</option>${d.registry.volumes.map(v => `<option value="${esc(v.id)}" ${VoiceStudio.volume === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
+    </div><div class="studio-catalogue">${VoiceStudio.catalogue(d)}</div></section>
+    <aside class="voice-studio-editor" id="studio-editor" data-character="${esc(selected?.c.name || '')}" aria-label="Character settings">
+    ${selected ? [selected].map(({ c, i }) => {
       const design = d.profile_texts[c.design] ? c.design : "__custom";
       const text = d.profile_texts[c.design] || c.design;
       return `<div class="card char-card" data-i="${i}">
+        <span class="small muted">Character settings</span>
         <div class="char-head"><i class="dot" style="background:${colorFor(c.name)};width:14px;height:14px"></i><h3 style="flex:1">${esc(c.name)}</h3>
           <div class="seg" aria-label="Gender">${[["male", "♂"], ["female", "♀"], ["unknown", "?"]].map(([g, sign]) => `<button class="${c.gender === g ? "on" : ""}" data-gender="${g}" title="${g}" aria-label="${g}" aria-pressed="${c.gender === g}">${sign}</button>`).join("")}</div></div>
         <button class="btn small" data-reading-voice>Read as: ${esc(c.read_as || c.name)}</button>
         <div class="row between"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${c.fixed ? icon('lock')+' Fixed voice' : 'Voice to review'}</span>${fieldHelp('Fixed voice','An approved recording keeps the voice identity. Unfix returns to the recipe and can make generated chapters outdated.')}
         <button class="btn" data-listen>${icon("play")} Listen</button></div>
         <audio data-audio controls class="hidden" style="width:100%"></audio>
-        ${c.fixed ? `<div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
+        ${c.fixed ? `<details class="character-section" data-studio-section="reference" open><summary>Fixed voice</summary><div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
           ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
-          <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div>
+          <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div></details>
           ${emotionTakesHtml(c.fixed, c.emotion_samples, d.emotions, c.seed)}` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
         <div class="small muted">Shared performance variation ${fieldHelp('Shared performance variation','The Narrator page sets one temperature for all voices, including characters. Each character has a separate seed. This does not change the fixed reference.')}<a href="#/narrator">Narrator settings</a></div>
-        <details class="character-section"><summary>Speaker detection</summary>
+        <details class="character-section" data-studio-section="detection"><summary>Speaker detection</summary>
           <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
           <label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>
         </details>
-        <details class="character-section"><summary>Voice creation</summary>
+        <details class="character-section" data-studio-section="creation"><summary>Voice creation</summary>
+          <label class="field"><span>Default preview for characters without their own sample</span><input type="text" id="sample" value="${esc(characterSample)}"></label>
           <label class="field"><span>Voice recipe model ${fieldHelp('Voice recipe model','Creates audition takes from a description (VoiceDesign), a built-in speaker (CustomVoice), or the narrator’s recipe model. A fixed reference takes priority until you unfix it.')}</span><select data-f="model">${["same as narrator", "VoiceDesign", "CustomVoice"].map(m=>`<option ${c.model === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
           <label class="field"><span>Character sample — personality (English) ${fieldHelp('Character sample','The text used for auditions. A fixed voice clones the approved recording without delivery instructions. The reference’s rhythm and emotion can influence later lines; punctuation still matters and does not guarantee a specific emotion.')}</span><textarea data-f="sample" rows="3" placeholder="${esc(characterSample)}">${esc(c.sample || '')}</textarea></label>
           <label class="field"><span>Voice description (VoiceDesign) ${fieldHelp('Voice description','Describes timbre, age and accent when creating a new VoiceDesign take. Editing it does not alter an already fixed voice.')}</span><select data-profile>${["__custom",...profileNames(genderKey[c.gender])].map(p=>`<option value="${esc(p)}" ${p===design ? 'selected' : ''}>${p==='__custom' ? 'Custom description' : esc(p)}</option>`).join('')}</select></label>
@@ -907,18 +951,19 @@ function drawCharacters() {
         </details>
         <div class="row end"><button class="btn ghost icon-only danger" data-delete title="Remove from glossary">${icon('trash')}</button></div>
       </div>`;
-    }).join("")}</div>`;
+    }).join("") : '<div class="empty">Select a character, or change the filters to see your cast.</div>'}</aside></div>`;
   CharacterRegistry.studioHeader();
   bindFieldHelp(view);
   $("#voice-guide").onclick = (e) => guard(() => showVoiceGuide(), e.currentTarget);
   $("#voice-guide-example").onclick = (e) => guard(() => showVoiceGuide(true), e.currentTarget);
   $("#query").oninput = (e) => { characterQuery = e.target.value.toLowerCase(); clearTimeout(drawCharacters.t); drawCharacters.t = setTimeout(() => { drawCharacters(); $("#query").focus(); $("#query").setSelectionRange(99, 99); }, 300); };
-  $("#sample").oninput = (e) => characterSample = e.target.value;
+  $("#sample")?.addEventListener('input', (e) => characterSample = e.target.value);
+  $('#studio-volume').onchange = (e) => { VoiceStudio.volume = e.target.value; drawCharacters(); };
   $("#new-character").onclick = async () => {
     const form = await modal("New character", `<label class="field"><span>Name (as it appears in the text)</span><input type="text" name="name"></label>
       <label class="field"><span>Gender</span><select name="gender"><option>male</option><option>female</option><option>unknown</option></select></label>
       <p class="muted small">Starts with a distinct voice recipe. You can edit it afterwards.</p>`, [{ label: "Cancel", value: null }, { label: "Add", value: "form", primary: true }]);
-    if (form) guard(async () => { characterData = { ...characterData, ...await api("/api/characters/new", { method: "POST", body: form }) }; drawCharacters(); });
+    if (form) guard(async () => { await api("/api/characters/new", { method: "POST", body: form }); VoiceStudio.selected = form.name.trim(); await viewCharacters(); });
   };
   $$(".char-card").forEach((card) => {
     const c = d.characters[+card.dataset.i];
@@ -973,7 +1018,7 @@ function drawCharacters() {
         await viewCharacters();
       }, b));
     }, e.currentTarget);
-    bindEmotionTakes(card, c.name, viewCharacters);
+    bindEmotionTakes(card, c.name, ({fixed}) => VoiceStudio.referenceChanged(d, c.name, fixed));
     $("[data-unfix]", card)?.addEventListener("click", async () => {
       if (!await modal(`Unfix the voice for ${c.name}?`, "<p>This character will use the description again, which may vary between passages. Generated chapters will become Outdated.</p>",
         [{ label: "Cancel", value: false }, { label: "Unfix voice", value: true, primary: true }])) return;
@@ -985,6 +1030,7 @@ function drawCharacters() {
       d.characters.splice(+card.dataset.i, 1); queueCharacterSave(0); drawCharacters();
     };
   });
+  VoiceStudio.bind(view, d, drawCharacters);
 }
 function queueCharacterSave(delay = 700) {
   clearTimeout(characterSaveTimer);
@@ -1071,7 +1117,7 @@ async function viewNarrator() {
       const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: sample, fixed: true } });
       $("#fixed-takes").innerHTML = `<div class="take"><b>Fixed voice</b><audio controls autoplay src="${result.takes[0].url}"></audio><span></span></div>`;
     }, e.currentTarget));
-    if (data.fixed) bindEmotionTakes($(".fixed-box"), "Narrator", viewNarrator);
+    if (data.fixed) bindEmotionTakes($(".fixed-box"), "Narrator", ({fixed}) => { data.fixed = fixed; });
     $("#unfix")?.addEventListener("click", async () => {
       if (!await modal("Unfix the narrator voice?", "<p>The narrator will use the description again and may vary between passages. Generated chapters will become Outdated.</p>",
         [{ label: "Cancel", value: false }, { label: "Unfix voice", value: true, primary: true }])) return;

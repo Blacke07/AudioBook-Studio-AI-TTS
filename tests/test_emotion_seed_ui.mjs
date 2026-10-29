@@ -11,21 +11,21 @@ ${extract('emotionTakesHtml')}\n({emotionTakesHtml})`);
 function setup() {
   const controls = new Map();
   const get = selector => {
-    if (!controls.has(selector)) controls.set(selector, {value:'', textContent:'', dataset:{}, addEventListener(){}, focus(){this.focused=true;}});
+    if (!controls.has(selector)) controls.set(selector, {value:'', textContent:'', dataset:{}, handlers:{}, classList:{toggle(){}}, remove(){}, addEventListener(name,fn){this.handlers[name]=fn;}, focus(){this.focused=true;}});
     return controls.get(selector);
   };
   const seed = get('[data-emotion-seed]'); seed.value = '2608'; seed.dataset.neutralSeed = '2608';
   seed.reportValidity = () => seed.value !== '' && Number.isInteger(Number(seed.value)) && +seed.value >= 0 && +seed.value <= 2147483647;
   get('b').textContent = 'Shouting'; get('[data-emotion-text]').value = 'An invented audition line.';
-  const box = {dataset:{emotionTake:'shouting'}};
+  const box = {dataset:{emotionTake:'shouting'},open:true,closest(){return {};}};
   const calls = []; let refreshed = 0;
   const state = {$:get, $$:selector=>selector==='[data-emotion-take]'?[box]:[], bindFieldHelp(){},
-    esc:String, icon:()=>'', toast(){}, guard:async fn=>fn(),
-    api:async(path,request)=>{calls.push({path,body:request.body});return {url:'/probe.wav',path:'work/previews/probe.wav',text:'Invented.',seed:request.body.seed,same_voice:-.14,recipe_source:'saved reference description'};}};
+    esc:String, icon:()=>'', toast(){}, guard:async fn=>fn(), modal:async()=>true,
+    api:async(path,request)=>{calls.push({path,body:request.body});return {fixed:{takes:path.endsWith('/unfix')?{}:{shouting:{}}},url:'/probe.wav',path:'work/previews/probe.wav',text:'Invented.',seed:request.body.seed,same_voice:-.14,recipe_source:'saved reference description'};}};
   vm.runInNewContext(`${extract('bindEmotionTakes')}\nthis.bind=bindEmotionTakes;`,state);
   state.bind({},'Ada',async()=>{refreshed++;});
   const click = selector => get(selector).onclick({currentTarget:get(selector)});
-  return {get,seed,calls,click,refreshed:()=>refreshed};
+  return {get,seed,calls,click,box,refreshed:()=>refreshed};
 }
 
 test('emotion seed control uses the approved seed and a saved emotional take seed when available',()=>{
@@ -60,4 +60,27 @@ test('approval keeps the heard seed even when the input is edited afterwards',as
   const ui=setup();ui.seed.value='42';await ui.click('[data-emotion-audition]');
   ui.seed.value='99';await ui.click('[data-emotion-fix]');
   assert.equal(ui.calls[1].body.origin.seed,42);assert.equal(ui.refreshed(),1);
+});
+
+test('approval updates status without replacing the open emotion or discarding its input',async()=>{
+  const ui=setup();await ui.click('[data-emotion-audition]');
+  const html=ui.get('[data-emotion-result]').innerHTML;
+  ui.get('[data-emotion-text]').value='An unsent second audition draft.';
+  await ui.click('[data-emotion-fix]');
+  assert.equal(ui.box.open,true);assert.equal(ui.get('[data-emotion-result]').innerHTML,html);
+  assert.equal(ui.get('[data-emotion-text]').value,'An unsent second audition draft.');
+  assert.equal(ui.get('[data-emotion-count]').textContent,'1/1');
+  assert.equal(ui.get('[data-emotion-fix]').disabled,true);
+  assert.equal(ui.get('[data-emotion-fix]').textContent,'Approved');
+  assert.match(ui.get('[data-emotion-feedback]').textContent,/Continue with another emotion/);
+  assert.equal(ui.calls.length,2,'No page reload or metadata fetch after approval');
+});
+
+test('removing an approved take keeps the panel open and allows explicit reapproval',async()=>{
+  const ui=setup();await ui.click('[data-emotion-audition]');await ui.click('[data-emotion-fix]');
+  await ui.get('[data-emotion-remove]').handlers.click();
+  assert.equal(ui.box.open,true);assert.equal(ui.get('[data-emotion-count]').textContent,'0/1');
+  assert.equal(ui.get('[data-emotion-fix]').disabled,false);
+  await ui.click('[data-emotion-fix]');
+  assert.equal(ui.get('[data-emotion-count]').textContent,'1/1');
 });

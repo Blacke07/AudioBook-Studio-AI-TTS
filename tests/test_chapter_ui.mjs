@@ -83,10 +83,11 @@ test('a fixed voice lists every emotion with its approved take or the neutral fa
     ${extract('emotionTakesHtml')}\n({emotionTakesHtml})`);
   const choices = [{key: 'neutral', label: 'Neutral'}, {key: 'angry', label: 'Angry'}, {key: 'tender', label: 'Tender'}];
   const html = emotionTakesHtml({takes: {angry: {url: '/a.wav'}}}, {tender: 'Come closer.'}, choices);
-  assert.match(html, /Emotion takes · 1\/2/);
+  assert.match(html, /Emotion takes · <span data-emotion-count>1\/2<\/span>/);
   assert.doesNotMatch(html, /data-emotion-take="neutral"/);
   assert.match(html, /data-emotion-take="angry"[\s\S]*Approved[\s\S]*src="\/a\.wav"[\s\S]*data-emotion-remove/);
   assert.match(html, /data-emotion-take="tender"[\s\S]*Neutral take used[\s\S]*Come closer\./);
   assert.match(source, /api\("\/api\/voices\/fix", \{ method: "POST", body: \{ role, path: take\.path, text: take\.text, emotion,/);
-  assert.match(source, /bindEmotionTakes\(\$\("\.fixed-box"\), "Narrator", viewNarrator\)/);
+  assert.match(source, /bindEmotionTakes\(\$\("\.fixed-box"\), "Narrator",/);
+  assert.doesNotMatch(source, /bindEmotionTakes\(\$\("\.fixed-box"\), "Narrator", viewNarrator\)/);
 });

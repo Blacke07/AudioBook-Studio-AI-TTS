@@ -555,8 +555,9 @@ def apply_preset(data: dict = Body(...)):
 
 @app.post("/api/voices/unfix")
 def unfix_voice(data: dict = Body(...)):
-    fixed_voices.unfix(str(data["role"]), emotions.check(data.get("emotion") or emotions.NEUTRAL))
-    return {"ok": True}
+    role = str(data["role"])
+    fixed_voices.unfix(role, emotions.check(data.get("emotion") or emotions.NEUTRAL))
+    return {"ok": True, "fixed": _fixed_info(role)}
 
 
 @app.post("/api/voices/emotion-preview")
