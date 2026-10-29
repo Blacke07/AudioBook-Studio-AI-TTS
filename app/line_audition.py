@@ -74,7 +74,7 @@ def audition(request):
                 take = conversion.fixed_voices.take(role, chunk.emotion)
                 checked = {**references, role: conversion.fixed_voices.FOLDER / take['file']}
             if not conversion.passage_file(key).exists():
-                conversion.render_checked(chunk, voice, settings['narrator']['temperature'], key, checked)
+                conversion.render_checked(chunk, voice, conversion.temperature_for(settings, role), key, checked)
             qc = project._read_json(conversion.passage_file(key).with_suffix('.qc.json'), {})
             if qc.get('drifting'):
                 warnings.add('The automatic voice check flagged this take. Listen for a change in identity.')

@@ -974,7 +974,9 @@ function drawCharacters() {
           ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
           <audio controls src="${esc(c.fixed.url)}" style="width:100%"></audio></div></details>
           ${emotionTakesHtml(c.fixed, c.emotion_samples, d.emotions, c.seed)}` : `<button class="btn primary hidden" data-fix>${icon("lock")} Fix this voice</button>`}
-        <div class="small muted">Shared performance variation ${fieldHelp('Shared performance variation','The Narrator page sets one temperature for all voices, including characters. Each character has a separate seed. This does not change the fixed reference.')}<a href="#/narrator">Narrator settings</a></div>
+        ${(() => { const shown = c.variation ?? d.narrator_variation; return `<label class="field"><span>Performance variation: <b data-variation-value>${shown}</b>${c.variation == null ? ' (the narrator’s)' : ''} ${fieldHelp('Performance variation','How freely this voice may vary its delivery. Lower values are more predictable. Without its own value a voice follows the Narrator page. Changing it makes this voice’s generated passages outdated; the fixed reference stays.')}</span>
+          <input type="range" data-variation min="0.3" max="1.2" step="0.05" value="${shown}" aria-label="Performance variation of ${esc(c.name)}"></label>
+          <div class="row small"><button type="button" class="btn ghost small" data-variation-reset ${c.variation == null ? 'disabled' : ''}>Follow the narrator (${d.narrator_variation})</button><a href="#/narrator">Narrator settings</a></div>`; })()}
         <details class="character-section" data-studio-section="detection"><summary>Speaker detection</summary>
           <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
           <label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>
@@ -1019,6 +1021,20 @@ function drawCharacters() {
     };
     $("[data-description]", card).oninput = (e) => { c.design = e.target.value; $("[data-profile]", card).value = "__custom"; changed(); };
     $("[data-dice]", card).onclick = () => { c.seed = Math.floor(Math.random() * 9000) + 1000; $("[data-f=seed]", card).value = c.seed; changed(); };
+    const variation = $("[data-variation]", card);
+    variation.oninput = () => { $("[data-variation-value]", card).textContent = variation.value; };
+    variation.onchange = () => guard(async () => {
+      const saved = await api("/api/voices/variation", { method: "PUT", body: { role: c.name, temperature: Number(variation.value) } });
+      c.variation = saved.temperature;
+      toast(`${c.name} now varies its delivery by ${saved.temperature}. Its generated passages become outdated.`);
+      drawCharacters();
+    });
+    $("[data-variation-reset]", card).onclick = (e) => guard(async () => {
+      await api("/api/voices/variation", { method: "PUT", body: { role: c.name, temperature: null } });
+      c.variation = null;
+      toast(`${c.name} follows the narrator’s variation again.`);
+      drawCharacters();
+    }, e.currentTarget);
     let lastTake = null;
     $("[data-listen]", card).onclick = (e) => guard(async () => {
       const result = await api("/api/characters/preview", { method: "POST", body: { character: c, text: c.sample || characterSample } });

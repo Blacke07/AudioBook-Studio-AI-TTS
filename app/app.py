@@ -32,7 +32,7 @@ import voice_rules
 import spoken_text
 from voice_rules_api import create_router as voice_rules_router
 from conversion import (CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, missing_takes, narrator_recipe, narrator_voice,
-                        preview_voice, speakable)
+                        preview_voice, speakable, temperature_for)
 from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast
 from voices import (AUTHOR_DELIVERY, BASE_CLONE, CHARACTER_PROFILES, CUSTOM_SPEAKERS, MODEL_NAMES, PROFILES,
                     describe, voice_parameters)
@@ -531,7 +531,7 @@ def character_candidates(data: dict = Body(...)):
     for step in range(int(data.get("count", 6))):
         seed = int(row[7]) + 7919 * step
         voice = Voice(recipe.speaker, recipe.description, recipe.instructions, seed, recipe.mode)
-        target = preview_voice(voice, text, settings["narrator"]["temperature"])
+        target = preview_voice(voice, text, temperature_for(settings, row[0]))
         if not voice_check.pitch_fits(target, row[2]):
             continue  # e.g. a "husky alto" generated as a man's voice
         scores = [(voice_check.closeness(target, path), name) for name, path in others.items()]
@@ -593,7 +593,7 @@ def emotion_preview(data: dict = Body(...)):
     voice = emotion_audition.prepare_voice(recipe, fixed, emotion, data.get('seed'))
     text = " ".join(str(data.get("text") or "").split())[:600] or fixed_voices.emotion_sample(role, emotion)
     fixed_voices.set_emotion_sample(role, emotion, text)
-    target = preview_voice(voice, text, settings["narrator"]["temperature"])
+    target = preview_voice(voice, text, temperature_for(settings, role))
     score = voice_check.closeness(target, fixed_voices.FOLDER / fixed["file"]) if voice_check.available() else None
     return {"url": _url(target), "path": str(target.relative_to(project.ROOT)).replace("\\", "/"), "text": text,
             "seed": voice.seed, "same_voice": None if score is None else round(score, 2),
@@ -604,7 +604,9 @@ def emotion_preview(data: dict = Body(...)):
 def characters():
     settings = project.load_settings()
     rows = glossary.load()
-    return {"default_sample": CHARACTER_SAMPLE, "characters": [{**dict(zip(FIELDS, row)), "read_as":voice_rules.global_rules().get(row[0],row[0]), "fixed": _fixed_info(row[0]),
+    return {"default_sample": CHARACTER_SAMPLE, "narrator_variation": settings["narrator"]["temperature"],
+            "characters": [{**dict(zip(FIELDS, row)), "read_as":voice_rules.global_rules().get(row[0],row[0]), "fixed": _fixed_info(row[0]),
+                            "variation": settings["voice_variation"].get(row[0]),
                             "sample": fixed_voices.sample_for(row[0]),
                             "emotion_samples": {key: fixed_voices.emotion_sample(row[0], key)
                                                 for key in emotions.KEYS if key != emotions.NEUTRAL}} for row in rows],
@@ -648,9 +650,29 @@ def character_preview(data: dict = Body(...)):
     row = [item.get(field, "") for field in FIELDS]
     voices = read_cast([row], MODEL_NAMES[settings["narrator"]["mode"]], narrator_voice(settings), {row[0]})
     text = str(data.get("text") or "").strip() or fixed_voices.sample_for(row[0]) or CHARACTER_SAMPLE
-    target = preview_voice(voices[row[0]], text, settings["narrator"]["temperature"])
+    target = preview_voice(voices[row[0]], text, temperature_for(settings, row[0]))
     return {"url": _url(target), "path": str(target.relative_to(project.ROOT)).replace("\\", "/"), "text": text,
             "fixed": voices[row[0]].mode == BASE_CLONE}
+
+
+@app.put("/api/voices/variation")
+def voice_variation(data: dict = Body(...)):
+    """A voice's own performance variation, or None to follow the narrator's again. Passages of that voice
+    become outdated, like any change of the sound."""
+    role = str(data.get("role", "")).strip()
+    if role != NARRATOR and role not in {row[0] for row in glossary.load()}:
+        raise ValueError(f"{role or 'This voice'} is not in the character glossary.")
+    value = data.get("temperature")
+    settings = project.load_settings()
+    variation = dict(settings["voice_variation"])
+    if value is None:
+        variation.pop(role, None)
+    elif project.clean_variation({role: value}):
+        variation[role] = value
+    else:
+        raise ValueError("Performance variation is a number above 0 and up to 2.")
+    project.save_settings({**settings, "voice_variation": variation})
+    return {"role": role, "temperature": variation.get(role), "default": settings["narrator"]["temperature"]}
 
 
 # -- narrator and settings ----------------------------------------------------------------------------

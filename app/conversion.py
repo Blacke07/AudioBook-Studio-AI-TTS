@@ -99,6 +99,11 @@ def narrator_recipe(settings):
     return Voice(narrator["speaker"], description, narrator["instructions"], int(narrator["seed"]), mode)
 
 
+def temperature_for(settings, role):
+    """The performance variation of a voice: its own when the author set one, else the narrator's."""
+    return float(settings.get("voice_variation", {}).get(role, settings["narrator"]["temperature"]))
+
+
 def generate(text, voice, temperature, variant=0):
     """One trimmed clip for `text` in `voice`. Callers hold LOCK."""
     data = synthesize(speakable(text), voice.mode, voice.speaker, voice.description, voice.instructions,
@@ -242,8 +247,8 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
     chunks = plan_chunks(lines, voices, settings["dialogue_pause"])
     if settings["announce_titles"]:
         chunks.insert(0, Chunk(NARRATOR, project.announcement(chapter.stem), SCENE_PAUSE))
-    temperature = settings["narrator"]["temperature"]
-    keys = [passage_key(chunk, voices[chunk.voice_role or chunk.role], temperature) for chunk in chunks]
+    keys = [passage_key(chunk, voices[chunk.voice_role or chunk.role],
+                        temperature_for(settings, chunk.voice_role or chunk.role)) for chunk in chunks]
     return chunks, voices, keys
 
 
@@ -294,7 +299,6 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
     """Generate the missing passages (resuming earlier work), then assemble chapter.wav.
     Returns the chapter metadata, or None when stopped before the end."""
     chunks, voices, keys = chapter_plan(chapter, settings)
-    temperature = settings["narrator"]["temperature"]
     project.PASSAGES.mkdir(parents=True, exist_ok=True)
     order = [index for index in generation_order(chunks, voices) if not passage_file(keys[index]).exists()]
     references = fixed_references(voices)
@@ -310,7 +314,7 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
         if heard and voice.mode == BASE_CLONE and role in references:
             # an emotion take is checked against itself: a whisper is not a drift from the neutral take
             checked = {**references, role: fixed_voices.FOLDER / fixed_voices.take(role, chunk.emotion)["file"]}
-        render_checked(chunk, voice, temperature, keys[index], checked)
+        render_checked(chunk, voice, temperature_for(settings, role), keys[index], checked)
     progress(len(chunks), len(chunks), "Assembling the chapter")
     chapter.work.mkdir(parents=True, exist_ok=True)
     temporary = chapter.audio_file.with_suffix(".tmp.wav")

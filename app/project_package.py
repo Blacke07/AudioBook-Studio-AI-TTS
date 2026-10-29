@@ -86,6 +86,7 @@ def clean_settings(data):
         raise ValueError('Invalid dialogue pause.')
     if not isinstance(result['author'], str) or len(result['author']) > 1000:
         raise ValueError('Invalid author metadata.')
+    result['voice_variation'] = project.clean_variation(result['voice_variation'])
     raw_video = data.get('video', {})
     if not isinstance(raw_video, dict):
         raise ValueError('Invalid video settings.')

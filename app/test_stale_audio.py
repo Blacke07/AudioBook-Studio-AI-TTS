@@ -61,6 +61,30 @@ class StaleAudioTests(unittest.TestCase):
             self.assertEqual(self.plan()[0][2], keys, scope)
             self.assertEqual(self.state(settings), 'generated', scope)
 
+    def test_a_voice_own_variation_outdates_only_the_passages_of_that_voice(self):
+        (chunks, _, keys), settings = self.plan()
+        self.generated(keys)
+        settings['voice_variation'] = {'Ada': 0.8}
+        changed = conversion.chapter_plan(self.chapter, settings)[2]
+        self.assertEqual([a != b for a, b in zip(keys, changed)], [chunk.role == 'Ada' for chunk in chunks])
+        self.assertEqual(conversion.temperature_for(settings, 'Ada'), 0.8)
+        self.assertEqual(conversion.temperature_for(settings, 'Morgan'), settings['narrator']['temperature'])
+        settings['voice_variation'] = {}
+        self.assertEqual(conversion.chapter_plan(self.chapter, settings)[2], keys, 'Following the narrator again restores the old audio')
+
+    def test_the_variation_of_a_voice_is_saved_listed_and_reset(self):
+        from fastapi.testclient import TestClient
+        client = TestClient(studio.app, base_url='http://127.0.0.1:7863')
+        reply = client.put('/api/voices/variation', json={'role': 'Ada', 'temperature': 0.8})
+        self.assertEqual((reply.status_code, reply.json()['temperature']), (200, 0.8))
+        ada = next(c for c in client.get('/api/characters').json()['characters'] if c['name'] == 'Ada')
+        self.assertEqual(ada['variation'], 0.8)
+        self.assertEqual(project.load_settings()['voice_variation'], {'Ada': 0.8})
+        for bad in ({'role': 'Ada', 'temperature': 0}, {'role': 'Ada', 'temperature': 'high'}, {'role': 'Nobody', 'temperature': 0.7}):
+            self.assertEqual(client.put('/api/voices/variation', json=bad).status_code, 400, bad)
+        self.assertEqual(client.put('/api/voices/variation', json={'role': 'Ada', 'temperature': None}).json()['temperature'], None)
+        self.assertEqual(project.load_settings()['voice_variation'], {})
+
     def test_the_chapter_link_changes_when_the_audio_is_rewritten_and_is_always_revalidated(self):
         from fastapi.testclient import TestClient
         (_, _, keys), settings = self.plan()

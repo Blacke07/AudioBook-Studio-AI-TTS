@@ -10,6 +10,7 @@ Paths below are relative to Data/User (development checkout: app); source chapte
 """
 import hashlib
 import json
+import math
 import ntpath
 import re
 from pathlib import Path
@@ -37,6 +38,7 @@ DEFAULT_SETTINGS = {
         "seed": 42,
         "temperature": 0.55,
     },
+    "voice_variation": {},          # voice name -> own performance variation; a voice without one follows the narrator's
     "multi_voice": True,
     "dialogue_pause": 0.6,
     "announce_titles": True,
@@ -106,12 +108,22 @@ def load_settings():
     return settings
 
 
+def clean_variation(value):
+    """The per-voice performance variations; anything that is not a number above 0 up to 2 is dropped."""
+    result = {}
+    for name, number in (value if isinstance(value, dict) else {}).items():
+        if type(number) in (int, float) and math.isfinite(number) and 0 < number <= 2 and isinstance(name, str):
+            result[name] = float(number)
+    return result
+
+
 def save_settings(settings):
     from dataclasses import asdict
     from video import VideoSettings
     clean = {**DEFAULT_SETTINGS, **settings}
     clean["narrator"] = {**DEFAULT_SETTINGS["narrator"], **settings.get("narrator", {})}
     clean["video"] = asdict(VideoSettings.from_dict(settings.get("video", {})))
+    clean["voice_variation"] = clean_variation(settings.get("voice_variation"))
     write_json(SETTINGS_FILE, clean)
     return load_settings()
 

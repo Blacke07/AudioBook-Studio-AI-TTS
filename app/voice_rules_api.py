@@ -29,7 +29,7 @@ def create_router(worker):
 
     @router.post('/compare')
     def compare(data: dict = Body(...)):
-        from conversion import narrator_voice, preview_voice
+        from conversion import narrator_voice, preview_voice, temperature_for
         from dialogue import read_cast
         from voices import MODEL_NAMES
         speaker = data.get('speaker')
@@ -46,8 +46,8 @@ def create_router(worker):
             narrator = narrator_voice(settings)
             voices = read_cast(rows,MODEL_NAMES[settings['narrator']['mode']],narrator,{speaker})
             result = []
-            for label, voice in (('Own voice',voices[speaker]),('Narrator',narrator)):
-                path = preview_voice(voice,text,settings['narrator']['temperature'])
+            for label, voice, role in (('Own voice',voices[speaker],speaker),('Narrator',narrator,'Narrator')):
+                path = preview_voice(voice,text,temperature_for(settings,role))
                 from urllib.parse import quote
                 result.append({'label':label,'url':'/api/audio?path='+quote(project.media_token(path))})
             return {'takes':result}
