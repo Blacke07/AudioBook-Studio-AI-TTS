@@ -32,7 +32,7 @@ const VoiceStudio = {
     const groups = this.groups(data), total = (data.emotions || []).filter(e => e.key !== 'neutral').length;
     if (!groups.some(g => g.people.length)) return '<p class="empty">No characters match these filters.</p>';
     return groups.filter(g => g.people.length).map(({category, priority, people}) =>
-      `<details class="studio-category" data-studio-category="${esc(category.id)}" ${!this.closed.has(category.id) || characterQuery ? 'open' : ''}>
+      `<details class="studio-category"${categoryStyle(category)} data-studio-category="${esc(category.id)}" ${!this.closed.has(category.id) || characterQuery ? 'open' : ''}>
         <summary><span>${esc(category.name)}</span><span class="small muted">Priority ${priority} · ${people.length}</span></summary>
         <div class="studio-tiles">${people.map(person => this.tile(person, total)).join('')}</div></details>`).join('');
   },

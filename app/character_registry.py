@@ -9,6 +9,8 @@ import project
 
 UNCATEGORIZED = {'id': 'uncategorized', 'name': 'Uncategorized', 'description': '', 'voice': 'own'}
 IDENTIFIER = re.compile('[a-zA-Z0-9_-]{1,80}')
+COLOR = re.compile('#[0-9a-fA-F]{6}')
+SHARED_VOICES = 'shared-voices'    # category of the voices minor characters share; they are voices, not speakers
 SOURCE_HASH = re.compile('[0-9a-f]{16}')
 STATUSES = ('approved', 'provisional', 'needs_review')
 
@@ -94,8 +96,10 @@ def organization(data=None):
     aliases = {entry['name']: [str(alias) for alias in entry.get('aliases', [])] for entry in data.get('characters', [])}
     ids, titles = set(), set()
     for cat in cats:
-        if not isinstance(cat, dict) or set(cat) != {'id', 'name', 'description', 'voice'}:
+        if not isinstance(cat, dict) or set(cat) - {'color'} != {'id', 'name', 'description', 'voice'}:
             raise ValueError('Invalid category record.')
+        if 'color' in cat and (not isinstance(cat['color'], str) or not COLOR.fullmatch(cat['color'])):
+            raise ValueError('A category color is written as #rrggbb.')
         key = cat['id']
         if not isinstance(key, str) or not IDENTIFIER.fullmatch(key) or key in ids:
             raise ValueError('Invalid or duplicate category ID.')
@@ -385,7 +389,8 @@ def register_analysis(rows, entries, volume, proposals=None):
     existing = {row[0] for row in glossary.load()}
     canonical = {name.casefold(): name for name in existing}
     volume_id = volume_key(volume)
-    replacements, added = {}, []
+    replacements, added, voices = {}, [], {}
+    shared = {name for name, meta in org['characters'].items() if meta['category'] == SHARED_VOICES}
     for entry in entries:
         name = entry[0]
         known = canonical.get(name.casefold())
@@ -398,10 +403,10 @@ def register_analysis(rows, entries, volume, proposals=None):
         canonical[name.casefold()] = name
         proposal = (proposals or {}).get(name, {})
         category = proposal.get('category', 'uncategorized')
-        # A new speaker may join a shared-voice category; a category with its own voices is the author's choice.
-        shared = {c['id'] for c in org['categories'] if c['voice'] != 'own'}
-        if category not in shared:
+        if category not in {c['id'] for c in org['categories']} or category == SHARED_VOICES:
             category = 'uncategorized'
+        if proposal.get('voice') in shared:
+            voices[name] = proposal['voice']
         meta = dict(category=category, status='provisional', label=name,
                     reason=proposal.get('reason') or 'New speaker identified during analysis; review the passages.')
         if volume_id:
@@ -410,7 +415,9 @@ def register_analysis(rows, entries, volume, proposals=None):
     if added:
         current = glossary.to_data(glossary.load() + added)
         for entry in current['characters']:
-            if entry['name'] in {row[0] for row in added} and inherited({**current, 'organization': org}).get(entry['name']) is None:
+            if entry['name'] in voices:
+                entry['read_as'] = voices[entry['name']]    # Gemma chose one of the shared voices
+            elif entry['name'] in {row[0] for row in added} and inherited({**current, 'organization': org}).get(entry['name']) is None:
                 entry['read_as'] = 'Narrator'
         current['organization'] = org
         # Fill metadata for newly added entries and validate before committing.

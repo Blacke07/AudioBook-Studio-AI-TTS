@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const read=name=>readFileSync(new URL('../app/web/'+name,import.meta.url),'utf8');
 const esc=read('app.js').split('\n').find(line=>line.startsWith('const esc ='));
 function feature() {
-  const state={characterQuery:'',icon:()=>'',colorFor:()=> '#123'};
+  const state={characterQuery:'',icon:()=>'',colorFor:()=> '#123',categoryStyle:()=>''};
   vm.runInNewContext(esc+'\n'+read('voice-studio.js')+'\nthis.feature=VoiceStudio;',state);
   return state.feature;
 }

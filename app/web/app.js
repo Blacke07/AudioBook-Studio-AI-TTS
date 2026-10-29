@@ -915,14 +915,13 @@ function bindEmotionTakes(root, role, refresh) {
   });
 }
 
-/* The main cast is every character whose category keeps its own voices and who reads with their own voice;
-   shared-cast voices are meant to be heard again, so voice checks leave them out. */
+/* The main cast is every character who reads with their own voice. The shared voices are meant to be heard
+   again in many characters, so voice checks leave them out. */
 function mainCastNames(d) {
   const organization = d.registry?.document?.organization;
   const reading = d.registry?.reading || {};
-  const sharedCategories = new Set((organization?.categories || []).filter((category) => category.voice !== 'own').map((category) => category.id));
   return new Set((d.characters || []).filter((character) =>
-    !sharedCategories.has(organization?.characters?.[character.name]?.category)
+    organization?.characters?.[character.name]?.category !== 'shared-voices'
     && (reading[character.name] || character.name) === character.name).map((character) => character.name));
 }
 

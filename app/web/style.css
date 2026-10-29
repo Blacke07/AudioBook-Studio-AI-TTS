@@ -409,6 +409,11 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 .registry-category > summary::before { content:'›'; }
 .registry-category[open] > summary::before { content:'⌄'; }
 .registry-category-title { font-weight: bold; flex:1; overflow-wrap:anywhere; }
+/* A category color, when the author chose one, marks its header, its rows and its Voice studio group. */
+.registry-category-title::before, .studio-category > summary > span:first-child::before { content:''; display:inline-block; width:.7em; height:.7em; margin-right:.5em; border-radius:50%; background:var(--category-color, transparent); }
+.registry-category:not([style*="--category-color"]) .registry-category-title::before, .studio-category:not([style*="--category-color"]) > summary > span:first-child::before { display:none; }
+.registry-table td:first-child { box-shadow:inset 4px 0 0 var(--category-color, transparent); }
+.studio-category[style*="--category-color"] .studio-character { border-left:4px solid var(--category-color); }
 .registry-table-wrap { overflow-x:auto; margin-top:12px; }
 .registry-table { width:100%; table-layout:fixed; min-width:820px; }
 .registry-table th { text-transform:none; letter-spacing:normal; }

@@ -10,18 +10,17 @@ vm.createContext(sandbox);
 vm.runInContext(region + ';this.main=mainCastNames', sandbox);
 
 const data = {
-  characters: ['Ada', 'Morgan', 'Guard', 'Clerk', 'Cook'].map((name) => ({name})),
+  characters: ['Ada', 'Morgan', 'Guard', 'Mature man', 'Cook'].map((name) => ({name})),
   registry: {
-    reading: {Morgan: 'Morgan', Guard: 'Morgan', Clerk: 'Narrator'},
-    document: {organization: {
-      categories: [{id: 'cast', voice: 'own'}, {id: 'extras', voice: 'Morgan'}],
-      characters: {Ada: {category: 'cast'}, Morgan: {category: 'extras'}, Guard: {category: 'extras'},
-                   Clerk: {category: 'cast'}, Cook: {category: 'cast'}},
-    }},
+    reading: {Guard: 'Mature man', 'Mature man': 'Mature man', Morgan: 'Narrator'},
+    document: {organization: {characters: {
+      Ada: {category: 'cast'}, Morgan: {category: 'cast'}, Guard: {category: 'extras'},
+      'Mature man': {category: 'shared-voices'}, Cook: {category: 'cast'},
+    }}},
   },
 };
 
-test('voice checks compare only characters of an own-voice category who read with their own voice', () => {
+test('voice checks compare only characters who read with their own voice, never the shared voices', () => {
   assert.deepEqual([...sandbox.main(data)].sort(), ['Ada', 'Cook']);
 });
 

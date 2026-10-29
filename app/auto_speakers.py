@@ -26,6 +26,7 @@ SCHEMA = {
                 "basis": {"type": "string", "enum": ["explicit", "context", "unclear"]},
                 "reason": {"type": "string"},
                 "category": {"type": "string"},
+                "voice": {"type": "string"},
             }, "required": ["id", "speaker", "gender", "basis", "reason"],
             "additionalProperties": False,
         }},
@@ -62,13 +63,12 @@ not make that character the speaker of the next line; ask who would say these wo
 If the identity is not established, use speaker=null, basis=unclear. Do not assign Narrator to dialogue.
 Gender: use the glossary, or explicit pronouns/descriptions in the story; otherwise unknown.
 Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
-Give a brief reason (at most twelve words). Category order is author priority, never evidence of who speaks.
-Never prefer a major character over textual evidence.
+Give a brief reason (at most twelve words). For a new speaker you may suggest a category ID from categories.
+Category order is author priority, never evidence of who speaks. Never prefer a major character over textual evidence.
 A speaker who is not in `characters` is a new speaker, and it never gets a voice of its own. Always return its
-`category`: the ID of a shared-voice category (its `voice` is not "own") whose name and description match the
-speaker's gender and age as the story shows them. A figure who speaks only a line or two, or whose gender and age the
-story does not show, goes to a category whose `voice` is "Narrator". Never choose a category whose `voice` is "own";
-those belong to the author's main cast.
+`voice`: the name of one entry of `shared_voices` that matches the speaker's gender and age as the story shows them,
+or "Narrator" for a figure who speaks only a line or two or whose gender and age the story does not show. A shared
+voice only gives the new speaker a voice; it is never the speaker, so never answer with its name as `speaker`.
 `narrative_contexts` names the verified scene contexts of the requested lines. They may disambiguate a role used by
 different people, but they are never proof by themselves. An alias applies only in the volume and context the author
 scoped it to; never carry a scoped alias into another context or invent an identity because the current volume is not listed.
@@ -131,7 +131,7 @@ def _in_text(name, source):
 
 
 def validate_assignments(items, ids, source, known, aliases=None, genders=None, hints=None, beats=None,
-                         alias_maps=None, scoped_aliases=None):
+                         alias_maps=None, scoped_aliases=None, shared_voices=()):
     """Check order and identities. `known` are accepted names, `aliases` maps lower-case aliases to names,
     `genders` gives glossary genders, `hints` the pronoun of each row's own speech tag and `beats` the
     character acting right before the row. `alias_maps` gives the context-valid map of each row and
@@ -168,6 +168,8 @@ def validate_assignments(items, ids, source, known, aliases=None, genders=None, 
                 speaker, basis, reason = None, "unclear", "name not present in the text or glossary"
             elif speaker and speaker[0].islower():
                 speaker = speaker[0].upper() + speaker[1:]  # "the conductor" -> "The conductor"
+            if speaker in shared_voices:
+                speaker, basis, reason = None, "unclear", "a shared voice is not a speaker"
         expected = PRONOUNS.get(hints.get(expected_id, ""))
         actor = (beats or {}).get(expected_id)
         if speaker and expected and genders.get(speaker, gender) not in (expected, "unknown"):
@@ -176,7 +178,7 @@ def validate_assignments(items, ids, source, known, aliases=None, genders=None, 
             # Two signals disagree: the author decides instead of the model.
             speaker, basis, reason = None, "unclear", f"AI: {speaker}, but the preceding action belongs to {actor}"
         result.append({"id": expected_id, "speaker": speaker, "gender": gender, "basis": basis, "reason": reason,
-                       **({'category':item['category']} if isinstance(item.get('category'), str) else {})})
+                       **{key: item[key] for key in ('category', 'voice') if isinstance(item.get(key), str)}})
     return result
 
 
@@ -316,7 +318,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         scenes.append(scene)
         if item.kind == "pause":
             scene += 1
-    from character_registry import alias_resolver, contexts_for, document, organization
+    from character_registry import SHARED_VOICES, alias_resolver, contexts_for, document, organization
     registry_data = document()
     registry = organization(registry_data)
     if volume and chapter:
@@ -359,6 +361,9 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         character['category'] = category
         character['priority'] = priorities.get(category, len(priorities))
     characters.sort(key=lambda c:c['priority'])
+    shared_names = {name for name, meta in registry['characters'].items() if meta['category'] == SHARED_VOICES}
+    shared_voices = [{"name": row[0], "description": row[3]} for row in entries if row[0] in shared_names]
+    characters = [c for c in characters if c['name'] not in shared_names]
     try:
         for batch_number, batch_ids in enumerate(batches):
             target_ids = [i for i in batch_ids if i in unassigned]
@@ -391,7 +396,8 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                     for name in names:
                         if name not in active:
                             active.append(name)
-            content = {"categories": registry['categories'], "characters": characters,
+            content = {"categories": [{k: v for k, v in cat.items() if k != 'color'} for cat in registry['categories']],
+                       "shared_voices": shared_voices, "characters": characters,
                        "other_known_speakers": [n for n in known if n not in genders],
                        "context": context, "requested_ids": target_ids}
             if delivery_ids:
@@ -417,7 +423,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                 batch = validate_assignments(parsed.get("assignments") if isinstance(parsed, dict) else None,
                                              target_ids, text, known, genders=genders, hints=hints, beats=beats,
                                              alias_maps={row_id: resolve(scenes[row_id]) for row_id in target_ids},
-                                             scoped_aliases=scoped_aliases)
+                                             scoped_aliases=scoped_aliases, shared_voices=shared_names)
             except AnalysisError as error:
                 error.diagnostic.update(model=MODEL, batch=batch_number + 1, batches=len(batches),
                                         batch_size=batch_size, done_reason=response.get("done_reason"))
@@ -428,7 +434,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
             if proposals is not None:
                 for item in batch:
                     if item['speaker'] and item['speaker'] not in genders:
-                        proposals[item['speaker']] = {k:item[k] for k in ('category','reason') if k in item}
+                        proposals[item['speaker']] = {k:item[k] for k in ('category','reason','voice') if k in item}
             for item in batch:
                 if item["speaker"]:
                     # Later batches see these rows as already attributed context.

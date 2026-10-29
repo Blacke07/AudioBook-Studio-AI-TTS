@@ -97,22 +97,35 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(registry.organization()['characters']['The guard']['volumes'],
                          [project.volume_id(volume)])
 
-    def test_a_new_speaker_joins_a_shared_voice_category_but_never_one_with_own_voices(self):
+    def test_a_new_speaker_reads_with_the_shared_voice_gemma_chose_or_with_the_narrator(self):
         state = self.draft()
-        state['document']['organization']['categories'] += [
-            dict(id='guests', name='Guests', description='', voice='Morgan'),
-            dict(id='mains', name='Mains', description='', voice='own')]
+        org = state['document']['organization']
+        org['categories'].append(dict(id=registry.SHARED_VOICES, name='Shared voices', description='', voice='Narrator'))
+        org['characters']['Morgan']['category'] = registry.SHARED_VOICES
         self.save(state)
         entries = glossary.load()
-        entries += [glossary.propose('The guard', 'male', entries)]
-        entries += [glossary.propose('The clerk', 'male', entries)]
-        proposals = {'The guard': {'category': 'guests'}, 'The clerk': {'category': 'mains'}}
-        registry.register_analysis([['The guard', 'Wait.', False], ['The clerk', 'Stop.', False]],
-                                   entries, 'Lantern', proposals)
-        people = registry.organization()['characters']
-        self.assertEqual((people['The guard']['category'], people['The clerk']['category']), ('guests', 'uncategorized'))
+        for name in ('The guard', 'The clerk', 'The cook'):
+            entries += [glossary.propose(name, 'male', entries)]
+        proposals = {'The guard': {'voice': 'Morgan'}, 'The clerk': {'voice': 'Narrator'},
+                     'The cook': {'category': registry.SHARED_VOICES, 'voice': 'Nobody'}}
+        registry.register_analysis([['The guard', 'Wait.', False], ['The clerk', 'Stop.', False],
+                                    ['The cook', 'Eat.', False]], entries, 'Lantern', proposals)
         rules = voice_rules.global_rules()
-        self.assertEqual((rules['The guard'], rules['The clerk']), ('Morgan', 'Narrator'))
+        self.assertEqual((rules['The guard'], rules['The clerk'], rules['The cook']), ('Morgan', 'Narrator', 'Narrator'))
+        people = registry.organization()['characters']
+        self.assertEqual(people['The guard']['category'], 'uncategorized')
+        self.assertEqual(people['The cook']['category'], 'uncategorized', 'A new speaker is never filed among the voices')
+
+    def test_a_category_color_is_optional_and_must_be_a_hex_color(self):
+        state = self.draft()
+        org = state['document']['organization']
+        org['categories'].append(dict(id='tinted', name='Tinted', description='', voice='Narrator', color='#5b9bff'))
+        self.save(state)
+        self.assertEqual(next(c for c in registry.organization()['categories'] if c['id'] == 'tinted')['color'], '#5b9bff')
+        for bad in ('blue', '#12345', 5):
+            org['categories'][-1]['color'] = bad
+            with self.assertRaisesRegex(ValueError, 'color'):
+                registry.organization(state['document'])
 
     def test_needs_review_cannot_use_provisional_switch(self):
         data=self.draft()['document'];data['organization']['allow_provisional']=True
