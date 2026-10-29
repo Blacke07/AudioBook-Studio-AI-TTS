@@ -88,6 +88,19 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual(speakers, ['Ada', 'Morgan'])
 
 
+class BeatHintTests(unittest.TestCase):
+    def hint(self, narration):
+        text = narration + '\n\n— Who taught you?'
+        return speakers.beat_hints(speakers.segment(text), 1, {'the man': 'The man', 'soles': 'Soles'})
+
+    def test_the_one_acting_is_the_beat_but_the_one_looked_at_is_not(self):
+        self.assertEqual(self.hint("Soles opened his hand."), {"action_by": "Soles"})
+        self.assertEqual(self.hint("The man looked at the hand. Then at Soles."), {})
+        self.assertEqual(self.hint("He turned to the man."), {})
+        self.assertEqual(self.hint("He stood, flexing the hand inside Soles's coat."), {})
+        self.assertEqual(self.hint("Soles's mouth tasted of blood."), {})
+
+
 class ContextBatchTests(unittest.TestCase):
     def test_distant_dialogue_is_split_without_losing_or_rewriting_requested_rows(self):
         rows = [[UNASSIGNED, '— Wait.'], [NARRATOR, 'Invented narration. ' * 900],
@@ -195,6 +208,13 @@ class GlossaryTests(unittest.TestCase):
                 ['B', '', 'male', '', '', 'Ryan', 'Same voice.', 2]]
         self.assertEqual(glossary.duplicate_voices(rows, 'VoiceDesign'), [['A', 'B']])
         self.assertEqual(glossary.duplicate_voices(rows, 'VoiceDesign', {'A'}), [])
+
+    def test_a_thought_reaches_gemma_as_a_thought_and_the_prompt_explains_backticks(self):
+        from auto_speakers import SYSTEM
+        rows = [[NARRATOR, "Soles waited."], ["Inner voice", "`She is lying.`"], [UNASSIGNED, "— Why?"]]
+        self.assertEqual([record["kind"] for record in context_window(rows, [2])], ["narration", "thought", "dialogue"])
+        self.assertIn("backticks", SYSTEM)
+        self.assertIn("never speech", SYSTEM)
 
     def test_alias_map_and_invalid_gender(self):
         rows = [['Evan Reed', 'Evan, Reed', 'male', '', '', '', 'x', 1]]

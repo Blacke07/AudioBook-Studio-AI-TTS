@@ -16,6 +16,9 @@ DIALOGUE_RE = re.compile(r'^(?:[—–-]\s+|["“])')
 HEADING_RE = re.compile(r"^[—–]\s+(?:[A-Z][a-z]+\s+)?[IVXLC]+\s+[—–]$")
 # A whole line in angle brackets: one of the voices heard inside the head (the past lives).
 INNER_RE = re.compile(r"^<[^<>]+>$")
+# Words between backticks, on one line, are a thought. They are read by the inner voice wherever they stand in
+# a narration paragraph; the backticks stay in the script and are dropped only when the text is spoken.
+THOUGHT_RE = re.compile(r"`[^`\n]*\w[^`\n]*`")
 
 # Speech tags ("Morgan said", "she asked quietly", "said the conductor"). The tag runs to the end of
 # its sentence; in dash-style dialogue whatever follows it is the same character speaking again.
@@ -126,6 +129,32 @@ def _split_quotes(text, starts_with_quote):
     return segments
 
 
+def _split_thoughts(text):
+    """Narration with `thoughts` -> narration / inner / narration segments, or None when there is no thought.
+    A backtick span inside a quoted speech is part of that speech, not a thought."""
+    quoted = [match.span() for match in QUOTE_RE.finditer(text)]
+    spans = [match.span() for match in THOUGHT_RE.finditer(text)
+             if not any(start <= match.start() and match.end() <= end for start, end in quoted)]
+    if not spans:
+        return None
+    segments, position = [], 0
+
+    def narration(piece):
+        stop = re.match(r"[.,;:!?…]+", piece)
+        if segments and segments[-1].kind == "inner" and stop:  # `thought`. keeps its full stop
+            segments[-1] = replace(segments[-1], text=segments[-1].text + stop.group())
+            piece = piece[stop.end():]
+        if piece.strip():
+            segments.extend(_split_quotes(piece, False) or [Segment("narration", piece.strip(), False)])
+
+    for start, end in spans:
+        narration(text[position:start])
+        segments.append(Segment("inner", text[start:end], False))
+        position = end
+    narration(text[position:])
+    return [replace(item, joined=index > 0) for index, item in enumerate(segments)]
+
+
 def segment(text, split_inline=True):
     """Narration, dialogue and pauses in reading order. The concatenated texts equal the source words."""
     segments, narrative = [], []
@@ -140,7 +169,8 @@ def segment(text, split_inline=True):
     def flush():
         if narrative:
             block = "\n".join(narrative)
-            add((split_inline and _split_quotes(block, False)) or [Segment("narration", block, False)], blank[1])
+            add((split_inline and (_split_thoughts(block) or _split_quotes(block, False)))
+                or [Segment("narration", block, False)], blank[1])
             narrative.clear()
 
     for raw in text.splitlines():

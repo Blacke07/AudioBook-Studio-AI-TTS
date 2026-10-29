@@ -157,5 +157,48 @@ class DialogueTests(unittest.TestCase):
         self.assertEqual([chunk.pause_after for chunk in chunks], [SCENE_PAUSE, 0])
 
 
+class ThoughtTests(unittest.TestCase):
+    """Words between backticks are a thought: read by the inner voice, wherever they stand in the narration."""
+    def rows(self, text):
+        return [(role, content) for role, content, *_ in prepare_script(text)]
+
+    def test_a_thought_opening_a_narration_paragraph_goes_to_the_inner_voice(self):
+        text = '`One gets us in and out.` Soles had said it on the phone. He had not believed it.'
+        self.assertEqual(self.rows(text), [('Inner voice', '`One gets us in and out.`'),
+                                           ('Narrator', 'Soles had said it on the phone. He had not believed it.')])
+
+    def test_a_thought_inside_a_paragraph_splits_it_in_three_and_keeps_every_word(self):
+        text = 'Maxim looked at the dogs. `Not again.` Then he laughed, and it passed.'
+        rows = self.rows(text)
+        self.assertEqual([role for role, _ in rows], ['Narrator', 'Inner voice', 'Narrator'])
+        self.assertEqual(words(' '.join(content for _, content in rows)), words(text))
+        self.assertEqual([row[2] for row in prepare_script(text)], [False, True, True],
+                         'The pieces stay one paragraph, so they are read in one breath')
+
+    def test_a_paragraph_made_only_of_a_thought_and_several_thoughts(self):
+        self.assertEqual(self.rows('`Go now.`'), [('Inner voice', '`Go now.`')])
+        self.assertEqual([role for role, _ in self.rows('`One.` And `two.`')], ['Inner voice', 'Narrator', 'Inner voice'])
+
+    def test_backticks_that_are_not_a_thought_stay_narration(self):
+        for text in ('He typed a lone ` and stopped.', 'The key `` was empty.', 'Line one `broken\nacross` lines.',
+                     '— She said `no` and left.', 'He said: “It is `fine`, really.” Then he left.'):
+            self.assertNotIn('Inner voice', [role for role, _ in self.rows(text)], text)
+
+    def test_the_backticks_are_not_spoken_and_speech_around_a_thought_is_unaffected(self):
+        from conversion import speakable
+        self.assertEqual(speakable('`One gets us in.`'), 'One gets us in.')
+        rows = self.rows('— Right, Maxim said.\n\n`She is lying.` He looked away.')
+        self.assertEqual([role for role, _ in rows], ['Maxim', 'Narrator', 'Inner voice', 'Narrator'])
+
+    def test_a_thought_inside_a_sentence_keeps_its_full_stop_and_no_row_is_only_punctuation(self):
+        rows = self.rows('He rolled over because it said `never stay on your face`. Then he breathed.')
+        self.assertEqual([role for role, _ in rows], ['Narrator', 'Inner voice', 'Narrator'])
+        self.assertEqual(rows[1][1], '`never stay on your face`.')
+
+    def test_a_single_narrator_reading_does_not_split_thoughts(self):
+        lines = read_script('`One gets us in.` Soles had said it.', False, None, '')
+        self.assertEqual([line.role for line in lines], [NARRATOR])
+
+
 if __name__ == '__main__':
     unittest.main()

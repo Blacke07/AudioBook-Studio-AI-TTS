@@ -50,8 +50,15 @@ order. Resolve explicit speech tags first, then action beats, addressees and pro
 - `unnamed`: the narration just before introduces an unidentified voice or person. Return speaker=null,
   basis=unclear, unless the context later names who it is.
 - `new_exchange`: a blank line precedes the row.
+- `continues`: id of the dialogue row this line follows after a speech tag in the same paragraph ("…," he said.
+  "…"): the same person keeps speaking, unless the words are plainly addressed to someone else.
+Rows of kind `thought` (speaker "Inner voice") are thoughts: text between backticks or angle brackets. They are
+never speech: never assign one to a character, never ask for its speaker, and a thought is no evidence of who
+speaks the next line. A text in backticks is never a dialogue row.
 Each dash or quotation line is a new turn. In a two-person exchange untagged lines usually alternate between the
 two people talking, but check the content: one character may say two consecutive lines, and a third may interrupt.
+Narration between two lines that only shows what one character feels or perceives (a taste of blood, a pain) does
+not make that character the speaker of the next line; ask who would say these words, and to whom.
 If the identity is not established, use speaker=null, basis=unclear. Do not assign Narrator to dialogue.
 Gender: use the glossary, or explicit pronouns/descriptions in the story; otherwise unknown.
 Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
@@ -181,8 +188,8 @@ def validate_deliveries(items, ids):
 
 def _context_record(rows, index):
     role, text = rows[index][:2]
-    return dict(id=index, kind="narration" if role in (NARRATOR, PAUSE) else "dialogue",
-                speaker=None if role in (NARRATOR, PAUSE, UNASSIGNED) else role, text=text)
+    kind = "narration" if role in (NARRATOR, PAUSE) else "thought" if role == INNER_VOICE else "dialogue"
+    return dict(id=index, kind=kind, speaker=None if role in (NARRATOR, PAUSE, UNASSIGNED) else role, text=text)
 
 
 def _context_cost(record):
@@ -243,6 +250,11 @@ UNNAMED_RE = re.compile(r"^(?:(?:a|an|another|some)\s+(?:\w+\s+)?(?:voice|man|wo
                         r"someone|somebody|a\s+voice)\b", re.IGNORECASE)
 
 
+# "Then at Soles." names Soles as the one looked at, and "inside Soles's coat" as an owner: neither is acting.
+OBJECT_OF_RE = re.compile(r"\b(?:at|to|toward|towards|for|with|from|behind|beside|past|against|upon|into|onto|over|"
+                          r"under|around|near|after|before|of|in|inside|on|by|beneath)\s+(?:the\s+)?$", re.IGNORECASE)
+
+
 def beat_hints(segments, index, aliases):
     """Who acts in the narration right before a dialogue line (action beat), even across a blank line:
     "Morgan checked the printed schedule.\\n\\n— Platform three?" is Morgan speaking."""
@@ -250,8 +262,9 @@ def beat_hints(segments, index, aliases):
         return {}
     sentences = re.split(r"(?<=[.!?…])\s+", segments[index - 1].text.strip())
     last = sentences[-1] if sentences else ""
-    found = {name for alias, name in aliases.items() if re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)",
-                                                                    last, re.IGNORECASE)}
+    found = {name for alias, name in aliases.items() if any(
+        not OBJECT_OF_RE.search(last[:match.start()])
+        for match in re.finditer(r"(?<!\w)" + re.escape(alias) + r"(?!\w)(?!['’]s)", last, re.IGNORECASE))}
     if len(found) == 1:
         return {"action_by": found.pop()}
     if not found and UNNAMED_RE.match(last):
@@ -355,6 +368,9 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                     record["new_exchange"] = True
                 if index in target_ids:
                     record.update(beat_hints(segments, index, resolve(scenes[index])))
+                    if index >= 2 and segments[index].joined and segments[index - 1].kind == "tag" \
+                            and segments[index - 2].kind == "dialogue":
+                        record["continues"] = index - 2
                     if "action_by" in record:
                         beats[index] = record["action_by"]
                     if index in hints:
@@ -440,7 +456,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
     dialogue_rows = tagged + len(assignments)
     lines = [f"{dialogue_rows} dialogue lines: {tagged} from explicit speaker tags (without AI), {counts['explicit']} explicit AI assignments, "
              f"{counts['context']} context assignments, {counts['unclear']} unclear."
-             + (f" {inner} angle-bracket lines read by {INNER_VOICE}." if inner else "")]
+             + (f" {inner} thoughts (angle brackets or backticks) read by {INNER_VOICE}." if inner else "")]
     if added:
         lines.append("New characters added to the glossary (review their gender and voice): " + ", ".join(
             f"{row[0]} ({row[2]}, {row[6]} / {row[5]})" for row in added))

@@ -183,7 +183,7 @@ def propose(name, gender, rows):
     """A starting voice for a new character, different from every recipe already in the glossary."""
     rows = normalize(rows)
     if name == INNER_VOICE:
-        return [name, "", "unknown", "Text enclosed in angle brackets: an inner voice heard in the mind.",
+        return [name, "", "unknown", "Text enclosed in angle brackets or backticks: a thought or inner voice heard in the mind.",
                 SAME_AS_NARRATOR, "Vivian", INNER_DESCRIPTION, 777]
     gender = gender if gender in CHARACTER_PROFILES else "unknown"
     used_designs = {" ".join(describe(row[6]).lower().split()) for row in rows}
