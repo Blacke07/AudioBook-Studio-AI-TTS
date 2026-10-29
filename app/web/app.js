@@ -472,10 +472,10 @@ async function viewChapter(volume, stem, after = {}) {
         <button class="btn primary" id="render" ${c.can_generate ? "" : 'disabled title="Finish text analysis and resolve speakers first."'}>${icon("play")} Generate chapter</button>
         <button class="btn" id="create-video" ${["generated", "exported"].includes(c.state) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create video</button>
         <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button>
-        <button class="btn ghost" id="pin-head" aria-pressed="${pinned}" title="Keep this menu visible while you scroll">${icon("pin")} Sticky menu</button></div></div>
+        <button class="btn ghost" id="pin-head" aria-pressed="${pinned}" title="Keep this menu and audio player visible while you scroll">${icon("pin")} Sticky menu</button></div>
+      ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}</div>
     ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}<button class="btn" id="diagnose-chapter">Diagnose / repair</button></div>` : ""}
     ${data.manual_draft || c.analysis_problem ? `<div class="banner">${icon("book")}<div><b>Manual speaker editor</b><p>The text is available even if AI analysis fails. Choose a speaker beside each line or split a line; changes save without using Gemma. Your original chapter file is never edited.</p><button class="btn" id="save-manual">${data.manual_draft ? "Use manual assignments" : "Keep these assignments"}</button></div></div>` : ""}
-    ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}
     ${c.video.url ? `<div class="row" style="margin:10px 0 16px"><a class="btn" href="${esc(c.video.url)}" target="_blank" rel="noopener">${icon("play")} Open video</a><button class="btn" id="show-video">${icon("folder")} Show in folder</button></div>` : ""}
     ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
     ${data.spoken_error ? `<div class="banner"><div><b>Spoken-text edits need review</b><p>${esc(data.spoken_error)}</p><details><summary>Stale edits</summary>${data.spoken_conflicts.map(entry=>`<div class="log">${esc(entry.text || "")}</div>`).join("")}</details><button class="btn" data-clear-spoken>Discard stale spoken-text edits</button></div></div>` : ""}
@@ -491,10 +491,10 @@ async function viewChapter(volume, stem, after = {}) {
       ${lines.length ? `<div class="row between"><div class="filters" style="margin:0">
           ${[["all", "All text"], ["dialogue", "Dialogue only"], ["review", `Lines to review (${reviewCount})`]].map(([key, label]) =>
             `<span class="chip ${lineFilter === key ? "on" : ""}" data-lines="${key}">${label}</span>`).join("")}</div>
-          <div class="legend">${speakers.map((s) => `<button type="button" class="chip" data-legend-voice="${esc(s)}" title="Edit reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`).join("")}</div></div>
+          <div class="legend">${speakers.map((s) => `<button type="button" class="chip" data-legend-voice="${esc(s)}" title="Edit character, name tags and reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`).join("")}</div></div>
         <div class="script" id="script">${shown.map(({ line, index }, position) => `
           <div class="line ${kind(line)} ${line.joined ? "joined" : position ? "gap" : ""} ${line.speaker === UNASSIGNED ? "unclear" : ""} ${line.omitted ? "omitted" : ""}" data-index="${index}" style="--c:${colorFor(line.speaker)}" ${line.omitted ? 'title="Omitted: the fixed voice identifies the speaker. You can change this in Settings."' : ""}>
-            <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.speaker)}</button>`}</div>
+            <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}" title="Edit character and voice · ${esc(line.speaker)}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.display_name || line.speaker)}</button>`}</div>
             <div class="text">${line.joined ? '<span class="muted">↳ </span>' : ""}${esc(line.text)}${line.spoken_text && line.spoken_text !== line.text ? `<div class="spoken-edit"><b>Spoken:</b> ${esc(line.spoken_text)}</div>` : ""}${line.basis === "context" ? ` <span class="chip" title="Speaker inferred from narrative context; review this line.">context</span>` : ""}${line.flagged ? ` <span class="flag" title="Unusual pacing: listen to this line">${icon("flag")}</span>` : ""}${line.variant ? ` <span class="chip">take ${line.variant + 1}</span>` : ""}${emotionPick(line, index)}</div>
             <div class="tools">
               ${line.start != null && c.audio ? `<button class="btn ghost icon-only" data-play="${index}" title="Play saved chapter from here">${icon("play")}</button>` : ""}
@@ -537,6 +537,7 @@ async function viewChapter(volume, stem, after = {}) {
     viewChapter(volume, stem, next);
   };
   VoiceRules.bindChapter(volume, stem, data);
+  ChapterCast.bind(volume, stem, data);
   SpokenText.bind(volume, stem, data);
   LineAudition.bind(volume, stem, data, (row) => viewChapter(volume, stem, {focus: row}));
   const rows = () => lines.map((l) => [l.speaker, l.text, l.joined, l.variant]);
@@ -544,6 +545,7 @@ async function viewChapter(volume, stem, after = {}) {
   $$("[data-who]").forEach((button) => button.onclick = (event) => {
     event.stopPropagation();
     const index = +button.dataset.who;
+    if (!data.manual_draft) return guard(() => ChapterCast.editor(lines[index].speaker,volume,stem,data,index),button);
     openMenu(button, data.speakers, lines[index].speaker, (speaker) => guard(() => {
       const next = rows();
       next[index][0] = speaker;
@@ -573,14 +575,8 @@ async function viewChapter(volume, stem, after = {}) {
     $("#chapter-head").classList.toggle("sticky", on);
     event.currentTarget.setAttribute("aria-pressed", String(on));
   };
-  $$("[data-split]").forEach((button) => button.onclick = async () => {
-    const index = +button.dataset.split;
-    const form = await modal("Split line", `<p class="muted">${esc(lines[index].text)}</p>
-      <label class="field"><span>Words where the new segment begins</span><input type="text" name="phrase" placeholder="he said"></label>
-      <label class="field"><span>Speaker for the new segment</span><select name="speaker">${data.speakers.map((s) => `<option>${esc(s)}</option>`).join("")}</select></label>`,
-      [{ label: "Cancel", value: null }, { label: "Split", value: "form", primary: true }]);
-    if (form) guard(async () => { await api("/api/chapter/split", { method: "POST", body: { volume, stem, index, source_hash:data.source_hash, ...form } }); viewChapter(volume, stem); });
-  });
+  $$("[data-split]").forEach(button => button.onclick = e => guard(() => LineSplit.editor(volume,stem,data,+button.dataset.split,
+    index => viewChapter(volume,stem,{focus:index})),e.currentTarget));
   const saveEmotion = (index, emotion, control) => guard(async () => {
     await api("/api/chapter/delivery", { method: "PUT", body: { volume, stem, row: index, emotion, source_hash: data.source_hash } });
     toast(`${emotionLabel(emotion)} · saved. Only this line is regenerated in the next run.`);
@@ -783,7 +779,7 @@ async function showVoiceGuide(example = false) {
   }
 }
 
-let characterData = null, characterSaveTimer = null, characterSample = "", characterQuery = "";
+let characterData = null, characterSaveTimer = null, characterSaveTask = null, characterSample = "", characterQuery = "";
 async function viewCharacters() {
   VoiceStudio.capture(view);
   // An analysis adds characters and a generation changes their reference voices: show the new state when the queue ends.
@@ -936,7 +932,7 @@ function drawCharacters() {
   const closestTo = (name) => pairs.filter((p) => p.a === name || p.b === name).map((p) => ({ name: p.a === name ? p.b : p.a, score: p.score }))[0];
   view.innerHTML = `
     <div class="page-head"><div><h1>Your characters</h1>
-      <p>Each character has an own reference voice. Reading rules can choose the narrator or another character without changing who speaks. Gender, aliases and context help identify speakers.</p></div>
+      <p>Characters can use their own voice, a shared voice or the narrator. Choose a character on the left to edit its voice settings.</p></div>
       <button class="btn primary" id="new-character">${icon("plus")} New character</button></div>
     <div class="voice-studio-layout"><section class="voice-studio-browser" aria-label="Character browser">
     <details class="card character-guide" data-studio-browser-section="guide"><summary>About fixed voices and auditions</summary><div class="stack">
@@ -966,10 +962,12 @@ function drawCharacters() {
         <div class="char-head"><i class="dot" style="background:${colorFor(c.name)};width:14px;height:14px"></i><h3 style="flex:1">${esc(c.name)}</h3>
           <div class="seg" aria-label="Gender">${[["male", "♂"], ["female", "♀"], ["unknown", "?"]].map(([g, sign]) => `<button class="${c.gender === g ? "on" : ""}" data-gender="${g}" title="${g}" aria-label="${g}" aria-pressed="${c.gender === g}">${sign}</button>`).join("")}</div></div>
         <button class="btn small ${c.library ? 'hidden' : ''}" data-reading-voice>Read as: ${esc(c.read_as || c.name)}</button>
-        ${voiceless ? `<p class="small muted">No voice of its own: it reads with ${esc(c.read_as === c.name ? 'the voice chosen above' : c.read_as)}. Write a description under Voice creation to give it one.</p>` : ''}
+        ${!c.library ? `<div class="studio-name-tags"><div class="name-tag-pills">${CharacterTags.summary(c.name,d.registry)}</div><button type="button" class="btn small" data-name-tags>Name tags…</button></div>` : ''}
+        ${voiceless ? `<div class="own-voice-start"><p class="small muted">No voice of its own. Current reading voice: <b>${esc(c.read_as === c.name ? 'not chosen' : c.read_as)}</b>.</p><button type="button" class="btn" data-create-own-voice>${icon('plus')} Create own voice</button><p class="small muted">Create an audition recipe here, then choose when to use it in Reading voice.</p></div>`
+          : !c.library ? `<div class="row"><span class="small muted">Own voice · ${esc(c.name)}</span>${c.read_as !== c.name ? '<button type="button" class="btn small" data-use-own-voice>Use own voice…</button>' : ''}</div>` : ''}
         <div class="${voiceless ? 'hidden' : ''}">
         <div class="row between"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${c.fixed ? icon('lock')+' Fixed voice' : 'Voice to review'}</span>${fieldHelp('Fixed voice','An approved recording keeps the voice identity. Unfix returns to the recipe and can make generated chapters outdated.')}
-        <button class="btn" data-listen>${icon("play")} Listen</button></div>
+        <button class="btn" data-listen>${icon("play")} ${c.library ? 'Audition voice' : 'Audition own voice'}</button></div>
         <audio data-audio controls class="hidden" style="width:100%"></audio>
         ${c.fixed ? `<details class="character-section" data-studio-section="reference" open><summary>Fixed voice</summary><div class="fixed-box"><div class="row between"><span class="small muted">Own reference</span><button class="btn ghost small" data-unfix>Unfix voice</button></div>
           ${(() => { const near=closestTo(c.name);return near ? `<div class="small">Most similar to <b>${esc(near.name)}</b>: ${near.score.toFixed(2)}${near.score >= 0.5 ? ' — may be confused' : ''}${fieldHelp('Voice similarity','A voice fingerprint comparison, not an emotion score. Higher values mean more similar voices; compare a more distinct take if listeners may confuse them.')}</div>` : ''; })()}
@@ -980,11 +978,10 @@ function drawCharacters() {
           <div class="row small"><button type="button" class="btn ghost small" data-variation-reset ${c.variation == null ? 'disabled' : ''}>Follow the narrator (${d.narrator_variation})</button><a href="#/narrator">Narrator settings</a></div>`; })()}
         </div>
         <details class="character-section" data-studio-section="detection"><summary>${c.library ? 'Who this voice suits' : 'Speaker detection'}</summary>
-          <label class="field ${c.library ? 'hidden' : ''}"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
           ${c.library ? `<label class="field"><span>Description for the dialogue model ${fieldHelp('Shared voice description','Sent to the dialogue model, which reads a new minor character with the shared voice that suits them. It is not spoken and does not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>`
             : `<label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>`}
         </details>
-        <details class="character-section" data-studio-section="creation"><summary>Voice creation</summary>
+        <details class="character-section ${voiceless ? 'hidden' : ''}" data-studio-section="creation"><summary>Voice creation</summary>
           <label class="field"><span>Default preview for characters without their own sample</span><input type="text" id="sample" value="${esc(characterSample)}"></label>
           <label class="field"><span>Voice recipe model ${fieldHelp('Voice recipe model','Creates audition takes from a description (VoiceDesign), a built-in speaker (CustomVoice), or the narrator’s recipe model. A fixed reference takes priority until you unfix it.')}</span><select data-f="model">${["same as narrator", "VoiceDesign", "CustomVoice"].map(m=>`<option ${c.model === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
           <label class="field"><span>Character sample — personality (English) ${fieldHelp('Character sample','The text used for auditions. A fixed voice clones the approved recording without delivery instructions. The reference’s rhythm and emotion can influence later lines; punctuation still matters and does not guarantee a specific emotion.')}</span><textarea data-f="sample" rows="3" placeholder="${esc(characterSample)}">${esc(c.sample || '')}</textarea></label>
@@ -1008,12 +1005,33 @@ function drawCharacters() {
   $("#new-character").onclick = async () => {
     const form = await modal("New character", `<label class="field"><span>Name (as it appears in the text)</span><input type="text" name="name"></label>
       <label class="field"><span>Gender</span><select name="gender"><option>male</option><option>female</option><option>unknown</option></select></label>
-      <p class="muted small">Starts with a distinct voice recipe. You can edit it afterwards.</p>`, [{ label: "Cancel", value: null }, { label: "Add", value: "form", primary: true }]);
+      <p class="muted small">Creates a character identity. Choose its Reading voice, or create an own voice explicitly.</p>`, [{ label: "Cancel", value: null }, { label: "Add", value: "form", primary: true }]);
     if (form) guard(async () => { await api("/api/characters/new", { method: "POST", body: form }); VoiceStudio.selected = form.name.trim(); await viewCharacters(); });
   };
   $$(".char-card").forEach((card) => {
     const c = d.characters[+card.dataset.i];
     $("[data-reading-voice]", card).onclick = e => guard(() => VoiceRules.editor(c.name,{text:c.sample || characterSample}),e.currentTarget);
+    $('[data-name-tags]',card)?.addEventListener('click',e=>guard(async()=>{await flushCharacterSave();await CharacterTags.editor(c.name);},e.currentTarget));
+    $('[data-create-own-voice]', card)?.addEventListener('click', async e => {
+      let registry;
+      await guard(async () => {
+        await flushCharacterSave();
+        registry = await api('/api/character-registry');
+      }, e.currentTarget);
+      if (!registry) return;
+      return guard(() => OwnVoice.editor(c, d.custom_speakers, registry.revision, async () => {
+        await viewCharacters();
+        const editor = $('#studio-editor');
+        if (editor?.dataset.character === c.name) {
+          $('[data-studio-section="creation"]', editor).open = true;
+          editor.scrollTop = 0;
+        }
+      }));
+    });
+    $('[data-use-own-voice]', card)?.addEventListener('click', e => guard(async () => {
+      await flushCharacterSave();
+      await VoiceRules.editor(c.name, {text:c.sample || characterSample, preferred_voice:c.name});
+    }, e.currentTarget));
     const changed = () => queueCharacterSave();
     $$("[data-f]", card).forEach((field) => field.oninput = () => { c[field.dataset.f] = field.type === "number" ? +field.value : field.value; changed(); });
     $$("[data-gender]", card).forEach((button) => button.onclick = () => { c.gender = button.dataset.gender; changed(); drawCharacters(); });
@@ -1058,6 +1076,7 @@ function drawCharacters() {
       const id = await pickPreset(`Voice presets for ${c.name}`, intro, [...all].sort((a, b) => rank(a) - rank(b)), c.fixed?.origin?.preset);
       if (!id) return;
       clearTimeout(characterSaveTimer);
+      characterSaveTimer = null;
       await api("/api/characters", { method: "PUT", body: { characters: characterData.characters } });
       const fixed = await api("/api/presets/apply", { method: "POST", body: { id, role: c.name } });
       toast(`${c.name} now uses the preset voice “${all.find((p) => p.id === id).name}”.${droppedTakes(fixed)}`);
@@ -1094,12 +1113,28 @@ function drawCharacters() {
 }
 function queueCharacterSave(delay = 700) {
   clearTimeout(characterSaveTimer);
-  characterSaveTimer = setTimeout(() => guard(async () => {
-    await api("/api/characters", { method: "PUT", body: { characters: characterData.characters } });
+  characterSaveTimer = setTimeout(() => {
+    characterSaveTimer = null;
+    guard(saveCharacterEdits);
+  }, delay);
+}
+function saveCharacterEdits() {
+  const data = characterData, characters = structuredClone(data.characters);
+  const task = (characterSaveTask || Promise.resolve()).then(async () => {
+    await api("/api/characters", { method: "PUT", body: { characters } });
     const fresh = await api("/api/characters");
-    characterData.duplicates = fresh.duplicates;
+    if (characterData === data) data.duplicates = fresh.duplicates;
     toast("Characters saved");
-  }), delay);
+  });
+  characterSaveTask = task;
+  return task.finally(() => { if (characterSaveTask === task) characterSaveTask = null; });
+}
+async function flushCharacterSave() {
+  const pending = characterSaveTimer !== null;
+  clearTimeout(characterSaveTimer);
+  characterSaveTimer = null;
+  if (pending) await saveCharacterEdits();
+  else if (characterSaveTask) await characterSaveTask;
 }
 
 /* ---------- narrator ---------- */

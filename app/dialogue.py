@@ -40,6 +40,7 @@ _TAG = (rf"(?:(?P<subject>{_SUBJECT})\s+(?:\w+ly\s+)?{_VERBS}|{_VERBS}\s+(?P<inv
 DASH_TAG_RE = re.compile(rf"(?<=[,?!…—–])\s+(?P<tag>{_TAG})")
 TAG_START_RE = re.compile(rf"^\s*{_TAG}")
 QUOTE_RE = re.compile(r'“[^”\n]*(?:”|$)|"[^"\n]*(?:"|$)', re.M)
+ANGLE_RE = re.compile(r'<[^<>\n]+>')
 PRONOUNS = {"he": "male", "she": "female"}
 
 
@@ -155,6 +156,38 @@ def _split_thoughts(text):
     return [replace(item, joined=index > 0) for index, item in enumerate(segments)]
 
 
+def _split_attributed_angles(text):
+    """An angle-bracket utterance with an explicit speech tag is speech, not an unattributed thought."""
+    match = ANGLE_RE.match(text)
+    if not match or not TAG_START_RE.match(text[match.end():]):
+        return None
+    tail = text[match.end():].strip()
+    tag = TAG_START_RE.match(tail)
+    result = [Segment('dialogue', match.group(), False),
+              Segment('tag', tag.group().strip(), True, _tag_subject(tag))]
+    rest = tail[tag.end():].strip()
+    if rest:
+        result.append(Segment('narration', rest, True))
+    return result
+
+
+def split_points(text):
+    """Code-point offsets for a visual split editor. Suggestions never change the source text."""
+    points = {}
+    for match in re.finditer(r'[.!?…]+["”’\)\]>]*\s+', text):
+        position = match.end()
+        before = text[:position].rstrip(' \t\n"”’)]>')
+        if re.search(r'\b(?:Mr|Mrs|Ms|Dr|Prof|Capt|St|vs|etc)\.$', before, re.I):
+            continue
+        if re.search(r'\b[A-Z]\.$', before):
+            continue
+        if position < len(text):
+            points[position] = 'Sentence end'
+    for match in re.finditer(rf'(?<=[,?!…—–>”"])\s+(?={_TAG})', text):
+        points[match.end()] = 'Speech tag'
+    return [{'position':position, 'kind':kind} for position,kind in sorted(points.items())]
+
+
 def segment(text, split_inline=True):
     """Narration, dialogue and pauses in reading order. The concatenated texts equal the source words."""
     segments, narrative = [], []
@@ -185,6 +218,9 @@ def segment(text, split_inline=True):
         elif HEADING_RE.match(line):
             flush()
             add([Segment("heading", line, False)], blank[0])
+        elif split_inline and (attributed := _split_attributed_angles(line)):
+            flush()
+            add(attributed, blank[0])
         elif INNER_RE.match(line) and split_inline:
             flush()
             add([Segment("inner", line, False)], blank[0])

@@ -3,29 +3,31 @@
 const VoiceRules = {
   label(speaker, lines) {
     const voices = [...new Set(lines.filter(line => line.speaker === speaker).map(line => line.read_as || speaker))];
-    return `${speaker} → ${voices.length > 1 ? 'Mixed voices' : voices[0] || speaker}`;
+    const names = [...new Set(lines.filter(line => line.speaker === speaker).map(line => line.display_name || speaker))];
+    return `${names.length===1?names[0]:speaker} → ${voices.length > 1 ? 'Mixed voices' : voices[0] || speaker}`;
   },
   async editor(speaker, context = {}) {
     const data = await api('/api/voice-rules/cast');
     const name = data.characters.find(c => c.name === speaker);
+    const ownVoice = data.voices.includes(speaker);
     const initialText = context.text || '';
     const scopes = context.stem ? [['line','Only this line'],['chapter','Only this chapter'],['everywhere','Everywhere']] : [['everywhere','Everywhere']];
     const choices = scopes.filter(([scope]) => scope !== 'line' || Number.isInteger(context.row));
     const body = `<p>The speaker stays <b>${esc(speaker)}</b>. Choose whose voice reads the words.</p>
       <label class="field"><span>Apply to</span><select name="scope">${choices.map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
-      <label class="field"><span>Reading voice</span><select name="read_as"><option value="">Use broader rule / own voice</option>
-        <option value="${esc(speaker)}">Own voice — ${esc(speaker)}</option>
+      <label class="field"><span>Reading voice</span><select name="read_as"><option value="">Use broader rule${ownVoice ? ' / own voice' : ''}</option>
+        ${ownVoice ? `<option value="${esc(speaker)}">Own voice — ${esc(speaker)}</option>` : ''}
         ${data.voices.filter(s => s !== speaker).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select></label>
       <p class="small muted">Current general rule: ${esc(name?.read_as || speaker)}. Priority: line → chapter → character → category → own voice.
-      Another character means their own voice; rules do not chain.</p>
-      <details><summary>Compare own voice with the narrator</summary><p class="small muted">Audition only. This does not apply a rule or change a fixed voice.</p>
+      A selected voice uses its own reference or recipe; rules do not chain.</p>
+      <details ${ownVoice ? '' : 'hidden'}><summary>Compare own voice with the narrator</summary><p class="small muted">Audition only. This does not apply a rule or change a fixed voice.</p>
         <label class="field"><span>Same text for both voices (maximum 600 characters)</span><textarea id="voice-compare-text" maxlength="600" rows="3">${esc(initialText)}</textarea></label>
         <button class="btn" type="button" id="voice-compare">Compare voices</button><div id="voice-compare-results"></div></details>`;
     const pending = modal(`Reading voice · ${speaker}`, body,
       [{label:'Cancel',value:null},{label:'Preview change',value:'form',primary:true}]);
     const scopeField = document.querySelector('[name="scope"]');
     const voiceField = document.querySelector('[name="read_as"]');
-    const updateChoice = () => { voiceField.value = scopeField.value === 'everywhere' ? (name?.explicit_read_as || '')
+    const updateChoice = () => { voiceField.value = scopeField.value === 'everywhere' ? (data.voices.includes(context.preferred_voice) ? context.preferred_voice : name?.explicit_read_as || '')
       : scopeField.value === 'chapter' ? context.chapter_choice || '' : context.line_choice || ''; };
     scopeField.onchange = updateChoice; updateChoice();
     $('#voice-compare').onclick = e => guard(async () => {
@@ -35,7 +37,7 @@ const VoiceRules = {
     const form = await pending;
     if (!form) return;
     const request = {...context, speaker, scope:form.scope, read_as:form.read_as || null};
-    delete request.text; delete request.line_choice; delete request.chapter_choice;
+    delete request.text; delete request.line_choice; delete request.chapter_choice; delete request.preferred_voice;
     await this.preview(request);
   },
   async preview(request) {
@@ -95,7 +97,6 @@ const VoiceRules = {
       const selected = data.voice_rules?.lines?.find(entry => entry.row === index);
       guard(() => this.editor(line.speaker,{...context,row:index,text:line.text,line_choice:selected?.read_as,chapter_choice:data.voice_rules?.characters?.[line.speaker]}),e.currentTarget);
     });
-    $$('[data-legend-voice]').forEach(button => button.onclick = e => guard(() => this.editor(button.dataset.legendVoice,{...context,chapter_choice:data.voice_rules?.characters?.[button.dataset.legendVoice],text:data.lines.find(line => line.speaker === button.dataset.legendVoice)?.text || ""}),e.currentTarget));
   }
 };
 

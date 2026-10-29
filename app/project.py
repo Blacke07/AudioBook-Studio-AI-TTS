@@ -209,7 +209,12 @@ def remove_volume(name):
 
 
 def _natural(path):
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.stem)]
+    return chapter_order(path.stem)
+
+
+def chapter_order(stem):
+    """The same natural order for source files and chapter-bound name tags."""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", stem)]
 
 
 def chapter_files(source):

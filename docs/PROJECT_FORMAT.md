@@ -7,7 +7,7 @@ An `.abstudio` file is a ZIP archive. It is data, never a plugin or executable. 
 | Entry | Part | Contents |
 | --- | --- | --- |
 | `settings.json` | settings | Narrator, reading, audio export and optional video settings |
-| `characters.json` | cast | Native version 2 character records, including aliases, model, description and seed |
+| `characters.json` | cast | Version 3 character identities and shared voices, with aliases and voice recipes; supported older records are converted on import |
 | `voices/registry.json` | cast | Fixed voice IDs, filenames, reference transcripts and provenance |
 | `voices/samples.json` | cast | Audition text and optional serious comparison text |
 | `voices/<filename>.wav` | cast | Only WAV files referenced by the registry |
@@ -87,6 +87,13 @@ Version 2 glossaries may include an optional `organization` object alongside `ch
 - `categories`: ordered records with stable `id`, display `name`, `description`, and `voice` (`own`, `Narrator`, or an existing character reference). `uncategorized` must remain present. Array order is presentation priority; it never decides who speaks.
 - `characters`: metadata keyed by stable character identity: `category`, `status` (`approved`, `provisional`, `needs_review`), video `label`, evidence `reason`, optional `volumes` (stable volume IDs), optional `contexts` (narrative-context IDs), optional `alias_scopes` (alias to `volumes`/`contexts` where it is valid), and optional `labels` (context-specific video labels).
 - `contexts`: optional narrative contexts with stable `id`, `name`, `volume` (ID) and `description`, plus reviewed `scenes` bindings (`chapter`, `first`, `last`, `source_hash`). Bindings made for different chapter text are stale and are not applied.
+
+A context may instead define `chapter_range`: `from` (inclusive) and/or `before` (exclusive), using chapter
+file stems in the same natural order as the volume. Name tags use these contexts to scope both an alias and,
+optionally, its display label. The canonical character and voice remain unchanged. These ranges apply to every
+scene in the matching chapters; they are edited through Name tags, separately from scene bindings. Package
+imports preserve the range and remap its volume/context references. Renamed boundary chapters need their rules
+reviewed; range rules do not rewrite existing speaker assignments or source text.
 - `allow_provisional`: explicit permission to render provisional identities; false by default. It never resolves an Unassigned speaker or permits Needs review identities.
 
 Absent fields preserve legacy behavior. The migration gives each volume a stable ID and converts the legacy single-volume `scope` to explicit `volumes` membership once; it never widens a scoped alias to every volume. An alias claimed by two identities in the same volume or context stays unresolved. Analysis reuses an existing identity and records the volume where it speaks; it does not create a second identity because a volume was not yet listed.

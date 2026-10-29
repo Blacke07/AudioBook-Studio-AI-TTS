@@ -467,7 +467,8 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(sorted(chapter.script()['attribution']),['1','2'])
         self.assertEqual(basis(),[('Morgan','explicit'),('Morgan','context'),('Ada','context')])
         # A split moves the later rows down; their marks follow them, the split row is settled.
-        web.split_row({'volume':'Lantern','stem':chapter.stem,'index':1,'phrase':'there.',
+        web.split_row({'volume':'Lantern','stem':chapter.stem,'index':1,'position':len('— Wait '),
+                       'script_revision':web.voice_rules.digest(chapter.script()),
                        'speaker':'Morgan','source_hash':chapter.script()['source_hash']})
         self.assertEqual(sorted(chapter.script()['attribution']),['3'])
         self.assertEqual(chapter.script()['rows'][3][0],'Ada')

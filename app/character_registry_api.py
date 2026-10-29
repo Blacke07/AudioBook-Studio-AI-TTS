@@ -25,6 +25,27 @@ def create_router(worker):
                             return dict(passages=result, truncated=True)
         return dict(passages=result, truncated=False)
 
+    @router.get('/name-tag-chapters')
+    def tag_chapters(volume: str):
+        import character_tags
+        return dict(chapters=character_tags.chapters(volume))
+
+    @router.post('/name-tag-preview')
+    def tag_preview(data: dict = Body(...)):
+        import character_tags
+        return character_tags.preview(data)
+
+    @router.post('/reassign-preview')
+    def reassign_preview(data: dict = Body(...)):
+        import chapter_cast
+        return chapter_cast.plan(data)[1]
+
+    @router.put('/reassign')
+    def reassign(data: dict = Body(...)):
+        import chapter_cast
+        with worker.idle_guard('replacing speaker assignments'):
+            return chapter_cast.apply(data['request'], data['plan_id'])
+
     @router.post('/preview')
     def preview(data: dict = Body(...)):
         result = registry.plan(data)

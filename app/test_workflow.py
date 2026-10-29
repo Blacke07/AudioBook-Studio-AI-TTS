@@ -157,7 +157,8 @@ class ManualEditorTests(unittest.TestCase):
 
     def test_split_works_before_any_ai_analysis_and_preserves_all_words(self):
         original = self.chapter.text()
-        self.studio.split_row({"volume":"Demo","stem":"001","index":0,"phrase":"invented",
+        self.studio.split_row({"volume":"Demo","stem":"001","index":0,"position":original.index('invented'),
+                               "script_revision":self.studio.voice_rules.digest(pipeline.manual_script(self.chapter, [])),
                                "speaker":"Narrator","source_hash":project.text_hash(original)})
         script = self.chapter.script()
         self.assertEqual(len(script["rows"]), 2)
@@ -165,7 +166,8 @@ class ManualEditorTests(unittest.TestCase):
         self.assertFalse(self.chapter.error_file.exists())
         current = "— A revised invented sentence."
         self.source.write_text(current, encoding="utf-8")
-        self.studio.split_row({"volume":"Demo","stem":"001","index":0,"phrase":"invented",
+        self.studio.split_row({"volume":"Demo","stem":"001","index":0,"position":current.index('invented'),
+                               "script_revision":self.studio.voice_rules.digest(pipeline.manual_script(self.chapter, [])),
                                "speaker":"Narrator","source_hash":project.text_hash(current)})
         self.assertEqual(" ".join(row[1] for row in self.chapter.script()["rows"]), current)
 

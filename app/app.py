@@ -33,7 +33,7 @@ import spoken_text
 from voice_rules_api import create_router as voice_rules_router
 from conversion import (CHARACTER_SAMPLE, PREVIEW_TEXT, chapter_plan, missing_takes, narrator_recipe, narrator_voice,
                         preview_voice, speakable, temperature_for)
-from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast
+from dialogue import INNER_VOICE, NARRATOR, PAUSE, SIMPLE_TAG_RE, UNASSIGNED, Voice, read_cast, split_points
 from voices import (AUTHOR_DELIVERY, BASE_CLONE, CHARACTER_PROFILES, CUSTOM_SPEAKERS, MODEL_NAMES, PROFILES,
                     describe, voice_parameters)
 from worker import Worker
@@ -120,7 +120,7 @@ async def project_consistency(request, call_next):
     if (path.startswith('/api/') and not path.startswith('/api/project')
             and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder','/api/video/codecs')):
         write = request.method in ('PUT','DELETE') or path in (
-            '/api/volumes','/api/characters/new','/api/voices/fix','/api/voices/unfix',
+            '/api/volumes','/api/characters/new','/api/characters/own-voice','/api/voices/fix','/api/voices/unfix',
             '/api/presets/apply','/api/chapter/split')
         async with project_access.hold(write=write):
             return await call_next(request)
@@ -289,13 +289,14 @@ def chapter(volume: str, stem: str):
         chosen, delivery_error = {}, str(error)
     if script:
         scenes = character_registry.scene_indices(script["rows"])
+        display_names = character_registry.resolved_labels(script['rows'], volume, stem, registry_document, script['source_hash'])
         context_names = {context["id"]: context["name"] for context in registry["contexts"]}
         scene_contexts = {number: character_registry.contexts_for(volume, stem, number,
                                                                  registry_document, script["source_hash"])
                           for number in set(scenes)}
         for index, row in enumerate(script["rows"]):
             bound = scene_contexts[scenes[index]]
-            line = {"speaker": row[0], "read_as":reading.get(index,row[0]), "text": row[1], "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
+            line = {"speaker": row[0], "display_name":display_names.get(index,row[0]), "read_as":reading.get(index,row[0]), "text": row[1], "split_points":split_points(row[1]), "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
                     "variant": int(row[3]) if len(row) > 3 else 0,
                     "flagged": index in meta.get("flagged_lines", []),
                     "scene": scenes[index],
@@ -331,7 +332,7 @@ def chapter(volume: str, stem: str):
             "missing_takes": sorted({f"{role}|{emotion}" for role, emotion in missing.values()}),
             "blockers": blockers, "unassigned": sum(1 for line in lines if line["speaker"] == UNASSIGNED),
             "contexts": [{"id": context["id"], "name": context["name"]} for context in registry["contexts"]
-                         if context["volume"] == character_registry.volume_key(volume)],
+                         if context["volume"] == character_registry.volume_key(volume) and 'chapter_range' not in context],
             "speakers": [NARRATOR, *[row[0] for row in rows]]}
 
 
@@ -420,13 +421,24 @@ def split_row(data: dict = Body(...)):
         item = project.get_chapter(data["volume"], data["stem"])
         script = _check_rows(item, source_hash=data.get("source_hash"))
         rows = [list(row) for row in script["rows"]]
-        index, phrase = int(data["index"]), str(data["phrase"]).strip()
+        if data.get('script_revision') != voice_rules.digest(script):
+            raise ValueError('The assignments changed. Reload the chapter before splitting a line.')
+        index = data.get('index')
+        if type(index) is not int or not 0 <= index < len(rows):
+            raise ValueError('Choose a current line.')
         text = str(rows[index][1])
-        position = text.find(phrase) if phrase else -1
-        if position <= 0:
-            raise ValueError("Enter the exact words where the new segment begins, after the start of the line.")
+        position = data.get('position')
+        if (type(position) is not int or not 0 < position < len(text)
+                or not text[:position].strip() or not text[position:].strip()
+                or not (text[position - 1].isspace() or text[position].isspace())):
+            raise ValueError('Choose a boundary between words, with text on both sides.')
+        speakers = {NARRATOR, UNASSIGNED, *(row[0] for row in glossary.load())}
+        first, second = data.get('first_speaker', rows[index][0]), data.get('speaker', NARRATOR)
+        if first not in speakers or second not in speakers:
+            raise ValueError('Choose an existing character or Narrator for each segment.')
+        rows[index][0] = first
         rows[index][1] = text[:position].rstrip()
-        rows.insert(index + 1, [data.get("speaker") or NARRATOR, text[position:].strip(), True, 0])
+        rows.insert(index + 1, [second, text[position:].strip(), True, 0])
         return {"added": _save_rows(item, script, rows)}
 
 
@@ -668,6 +680,13 @@ def character_preview(data: dict = Body(...)):
     target = preview_voice(voices[row[0]], text, temperature_for(settings, row[0]))
     return {"url": _url(target), "path": str(target.relative_to(project.ROOT)).replace("\\", "/"), "text": text,
             "fixed": voices[row[0]].mode == BASE_CLONE}
+
+
+@app.post('/api/characters/own-voice')
+def create_own_voice(data: dict = Body(...)):
+    import voice_library
+    with worker.idle_guard('creating an own voice'):
+        return voice_library.create_own_voice(data)
 
 
 @app.put("/api/voices/variation")

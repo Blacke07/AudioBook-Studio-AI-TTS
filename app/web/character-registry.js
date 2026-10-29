@@ -49,7 +49,10 @@ const CharacterRegistry = {
   voices(current,inherit=true,exclude='') {
     // Reading voices are voices: the characters' own and the shared ones, never a character without a voice.
     const voices=this.state.voices||this.state.document.characters.map(c=>c.name);
-    return this.options([...(inherit?[['','Inherit category']]:[]),['own','Own voice'],['Narrator','Narrator'],...voices.filter(name=>name!==exclude).map(name=>[name,name])],current);
+    const available=!exclude||voices.includes(exclude);
+    return this.options(inherit?[['','Inherit category']]:[],current)
+      + `<option value="own" ${current==='own'?'selected':''} ${available?'':'disabled'}>Own voice${available?'':' — create one first'}</option>`
+      + this.options([['Narrator','Narrator'],...voices.filter(name=>name!==exclude).map(name=>[name,name])],current);
   },
   readingInfo(c,cat) {
     const explicit=Object.hasOwn(c,'read_as'),target=explicit?c.read_as:(cat.voice==='own'?c.name:cat.voice);
@@ -176,7 +179,7 @@ const CharacterRegistry = {
     const menu=document.createElement('div');
     menu.className='registry-action-list row-menu';
     menu.setAttribute('role','menu');
-    menu.innerHTML=[['details','Details'],['up','Move up'],['down','Move down'],['category','Move to category…'],
+    menu.innerHTML=[['details','Details'],['tags','Name tags…'],['up','Move up'],['down','Move down'],['category','Move to category…'],
       ['volumes','Assign to volumes…'],['listen','Listen']]
       .map(([action,label])=>`<button class="btn" role="menuitem" data-row-action="${action}">${label}</button>`).join('');
     document.body.append(menu);
@@ -204,6 +207,7 @@ const CharacterRegistry = {
   async rowAction(name,action) {
     const meta=this.state.document.organization.characters[name],label=meta?.label||name;
     if(action==='details')return this.details(name);
+    if(action==='tags'){if(this.dirty()&&!await this.leave())return;return CharacterTags.editor(name);}
     if(action==='up')return this.moveCharacter(name,-1);
     if(action==='down')return this.moveCharacter(name,1);
     if(action==='category'){const id=await this.chooseCategory('Move '+label);if(id){meta.category=id;this.opened.add(id);this.draftChanged();this.draw();}return;}
@@ -347,15 +351,17 @@ const CharacterRegistry = {
     const doc=this.state.document,c=doc.characters.find(c=>c.name===name),m=doc.organization.characters[name];
     const contexts=doc.organization.contexts||[];
     const contextName=id=>contexts.find(item=>item.id===id)?.name||'Removed context';
-    const contextLines=(m.labels||[]).filter(item=>(item.contexts||[]).length)
+    const rangeLabel=item=>(item.contexts||[]).some(id=>contexts.find(c=>c.id===id)?.chapter_range);
+    const contextLines=(m.labels||[]).filter(item=>(item.contexts||[]).length&&!rangeLabel(item))
       .flatMap(item=>item.contexts.map(id=>`${contextName(id)} = ${item.label}`)).join('\n');
     const volumes=(m.volumes||[]).map(id=>this.volumeName(id));
     const form=await modal('Character details',`<p><b>${esc(name)}</b></p><label class="field"><span>Video label</span><input name="label" value="${esc(m.label)}"></label>
       <label class="field"><span>Contextual video labels (one per line: Context = Label)</span><textarea name="context_labels" rows="3" placeholder="Before the reveal = The soldier">${esc(contextLines)}</textarea></label>
-      <label class="field"><span>Aliases (comma separated)</span><input name="aliases" value="${esc(c.aliases.join(', '))}"></label>
+      <p class="small muted">Alternative names and chapter-bound labels are managed in Name tags.</p>
       <label class="field"><span>Speaker detection context</span><textarea name="note">${esc(c.note)}</textarea></label>
       <p class="small muted">${esc(m.reason)}${volumes.length?' · Volumes: '+esc(volumes.join(', ')):''}</p>`,
-      [{label:'Cancel',value:null},{label:'Review passages',value:'passages'},{label:'Rename identity',value:'rename'},{label:'Merge into…',value:'merge'},{label:'Save details',value:'form',primary:true}]);
+      [{label:'Cancel',value:null},{label:'Name tags…',value:'tags'},{label:'Review passages',value:'passages'},{label:'Rename identity',value:'rename'},{label:'Merge into…',value:'merge'},{label:'Save details',value:'form',primary:true}]);
+    if(form==='tags'){if(this.dirty()&&!await this.leave())return;return CharacterTags.editor(name);}
     if(form==='passages')return this.passages(name);
     if(form==='merge')return this.merge(name);
     if(form==='rename')return this.merge(name,true);
@@ -370,10 +376,10 @@ const CharacterRegistry = {
         const existing=parsed.find(item=>item.label===label);
         if(existing)existing.contexts.push(context);else parsed.push({label,contexts:[context]});
       }
-      const kept=(m.labels||[]).filter(item=>!(item.contexts||[]).length);
+      const kept=(m.labels||[]).filter(item=>!(item.contexts||[]).length||rangeLabel(item));
       const labels=[...kept,...parsed];
       if(labels.length)m.labels=labels;else delete m.labels;
-      m.label=form.label;c.aliases=form.aliases.split(',').map(s=>s.trim()).filter(Boolean);c.note=form.note;this.draw();
+      m.label=form.label;c.note=form.note;this.draw();
     }
   },
   async passages(name){const d=await api('/api/character-registry/passages?name='+encodeURIComponent(name));await modal('Speaker passages',d.passages.map(p=>`<p><a href="#/chapter/${encodeURIComponent(p.volume)}/${encodeURIComponent(p.chapter)}">${esc(p.volume)} · ${esc(p.chapter)}</a><br>${esc(p.text)}</p>`).join('')||'<p>No saved passages yet.</p>');},

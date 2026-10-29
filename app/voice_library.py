@@ -91,3 +91,42 @@ def migrate():
     folder = backup()
     transact({'characters.json': encoded(result)})
     return folder
+
+
+def create_own_voice(request):
+    """Create an explicitly requested recipe without replacing a reference or changing reading rules."""
+    from character_registry import document, snapshot
+    from project_package import cast_rows, encoded
+    from project_transfer import transact
+    from voice_rules import global_rules
+    from voices import MODEL_NAMES, custom_speaker, voice_parameters
+
+    fields = {'role', 'revision', 'model', 'design', 'custom', 'seed'}
+    if not isinstance(request, dict) or set(request) != fields:
+        raise ValueError('Invalid own voice request.')
+    role = glossary.speaker_name(request['role'])
+    if request['revision'] != snapshot()['revision']:
+        raise ValueError('Characters changed. Close this dialog and reopen Create own voice.')
+    data = deepcopy(document())
+    entry = next((item for item in data['characters'] if item['name'] == role), None)
+    if entry is None:
+        raise ValueError('Choose an existing character, not a shared voice.')
+    if entry.get('custom_voice') or entry.get('voice_design') or fixed_voices.get(role):
+        raise ValueError('This character already has an own voice. Edit it in Voice creation.')
+    model, seed = request['model'], request['seed']
+    if not isinstance(model, str) or model not in MODEL_NAMES:
+        raise ValueError('Choose VoiceDesign or CustomVoice.')
+    if type(seed) is not int or not 0 <= seed <= 2147483647:
+        raise ValueError('Enter a whole-number seed between 0 and 2147483647.')
+    if not isinstance(request['design'], str) or not isinstance(request['custom'], str):
+        raise ValueError('Enter a voice description or choose a built-in speaker.')
+    design = request['design'].strip() if model == 'VoiceDesign' else ''
+    custom = custom_speaker(request['custom']) if model == 'CustomVoice' else ''
+    voice_parameters(MODEL_NAMES[model], custom or '', design, '')
+    reading = global_rules(data)
+    entry.update(model=model, custom_voice=custom, voice_design=design, seed=seed)
+    cast_rows(data)
+    if global_rules(data) != reading:
+        raise ValueError('Creating a recipe must not change the reading rules.')
+    transact({'characters.json': encoded(data)})
+    return {'role': role, 'read_as': reading.get(role, role), 'created': True}

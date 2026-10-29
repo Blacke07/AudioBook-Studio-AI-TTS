@@ -44,7 +44,7 @@ def _contexts(value):
         raise ValueError('Invalid narrative contexts.')
     result, ids, titles = [], set(), set()
     for context in value:
-        if not isinstance(context, dict) or set(context) - {'id', 'name', 'volume', 'description', 'scenes'}:
+        if not isinstance(context, dict) or set(context) - {'id', 'name', 'volume', 'description', 'scenes', 'chapter_range'}:
             raise ValueError('Invalid narrative context record.')
         key = context.get('id')
         if not isinstance(key, str) or not IDENTIFIER.fullmatch(key) or key in ids:
@@ -57,6 +57,17 @@ def _contexts(value):
             raise ValueError('A narrative context needs a registered volume.')
         if not isinstance(context.get('description', ''), str) or len(context['description']) > 2000:
             raise ValueError('Narrative context description is too long.')
+        if 'chapter_range' in context:
+            bounds = context['chapter_range']
+            if context.get('scenes'):
+                raise ValueError('A chapter range and individual scene bindings are separate contexts.')
+            if not isinstance(bounds, dict) or not bounds or set(bounds) - {'from', 'before'}:
+                raise ValueError('Choose a chapter range for this name tag.')
+            for stem in bounds.values():
+                if not isinstance(stem, str) or not stem or len(stem) > 300 or any(c in stem for c in '/\\\x00'):
+                    raise ValueError('Invalid name-tag chapter boundary.')
+            if 'from' in bounds and 'before' in bounds and project.chapter_order(bounds['from']) >= project.chapter_order(bounds['before']):
+                raise ValueError('The starting chapter must come before the ending boundary.')
         scenes = context.get('scenes', [])
         if not isinstance(scenes, list) or len(scenes) > 5000:
             raise ValueError('Invalid narrative context scenes.')
@@ -247,6 +258,13 @@ def _contexts_for(org, volume, chapter, scene, source_hash=None):
         return result
     for context in org['contexts']:
         if context['volume'] != volume:
+            continue
+        bounds = context.get('chapter_range')
+        if bounds:
+            order = project.chapter_order(chapter)
+            if (('from' not in bounds or order >= project.chapter_order(bounds['from']))
+                    and ('before' not in bounds or order < project.chapter_order(bounds['before']))):
+                result.append(context['id'])
             continue
         for binding in context['scenes']:
             if binding['chapter'] != chapter or not binding['first'] <= scene <= binding['last']:
@@ -908,6 +926,8 @@ def bind_scene(volume_name, chapter, scene, context_id, source_hash):
         target = next((item for item in org['contexts'] if item['id'] == context_id), None)
         if target is None or target['volume'] != volume:
             raise ValueError('Choose a context that belongs to this volume.')
+        if 'chapter_range' in target:
+            raise ValueError('Edit chapter-bound contexts through Name tags, not scene bindings.')
     for context in org['contexts']:
         kept = []
         for binding in context['scenes']:
