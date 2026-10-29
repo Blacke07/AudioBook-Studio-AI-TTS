@@ -118,17 +118,26 @@ async function pollWorker() {
     const signature = `${workerState.running}|${workerState.done}|${workerState.phase}|${workerState.log.length}`;
     if (signature !== lastWorkerSignature) {
       const finished = lastWorkerSignature && signature.split("|")[0] !== lastWorkerSignature.split("|")[0];
+      const ended = lastWorkerSignature.startsWith("true|") && signature.startsWith("false|");
       lastWorkerSignature = signature;
       if (finished || workerState.running) refreshOnProgress?.();
+      if (ended) refreshOnFinish?.();
     }
   } catch { /* server restarting */ }
   setTimeout(pollWorker, workerState.running ? 1500 : 4000);
 }
 let refreshOnProgress = null;
+let refreshOnFinish = null;
 let refreshTimer = null;
-function scheduleRefresh(callback) {
-  refreshOnProgress = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(callback, 1200); };
+function scheduleRefresh(callback, onlyWhenFinished = false) {
+  const hook = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(callback, 1200); };
+  if (onlyWhenFinished) refreshOnFinish = hook; else refreshOnProgress = hook;
 }
+// Anything the author is in the middle of must survive a refresh: unsaved edits, a field with the cursor,
+// an open dialog, audio being heard.
+const userIsBusy = () => CharacterRegistry.dirty() || !!document.querySelector(".modal")
+  || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")
+  || $$("audio", view).some((audio) => !audio.paused);
 
 function renderWorker() {
   const s = workerState;
@@ -165,6 +174,7 @@ async function route() {
     location.hash = '#/characters'; return;
   }
   refreshOnProgress = null;
+  refreshOnFinish = null;
   closeMenu();
   const hash = location.hash || "#/";
   for (const [pattern, render, section] of routes) {
@@ -772,6 +782,8 @@ async function showVoiceGuide(example = false) {
 let characterData = null, characterSaveTimer = null, characterSample = "", characterQuery = "";
 async function viewCharacters() {
   VoiceStudio.capture(view);
+  // An analysis adds characters and a generation changes their reference voices: show the new state when the queue ends.
+  scheduleRefresh(() => { if (!userIsBusy()) viewCharacters(); }, true);
   if (CharacterRegistry.tab === 'quick') return CharacterRegistry.show();
   const [characters, similarity, registry] = await Promise.all([api("/api/characters"), api("/api/voices/similarity"), api('/api/character-registry')]);
   characterData = { ...characters, similarity, registry };

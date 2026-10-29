@@ -102,6 +102,16 @@ def _url(path):
     return "/api/audio?path=" + quote(project.media_token(path))
 
 
+def _fresh_url(path):
+    """A link that changes whenever the file is rewritten: a regenerated chapter.wav keeps its name, so
+    without a version the window can keep playing the copy it already has."""
+    try:
+        version = Path(path).stat().st_mtime_ns
+    except OSError:
+        version = 0
+    return f"{_url(path)}&v={version}"
+
+
 @app.middleware("http")
 async def project_consistency(request, call_next):
     # Project routes acquire their gate after native dialogs. Slow auditions are concurrent readers;
@@ -123,14 +133,14 @@ def _chapter_info(chapter, settings, rows):
     info = {"stem": chapter.stem, "number": chapter.number, "title": chapter.title, "state": state,
             "label": pipeline.STATES[state], **details, **pipeline.readiness(state, details)}
     if chapter.audio_file.exists():
-        info["audio"] = _url(chapter.audio_file)
+        info["audio"] = _fresh_url(chapter.audio_file)
     try:
         info["video"] = video_jobs.video_status(chapter, settings, state in ("generated", "exported"))
     except (ValueError, OSError) as error:
         info["video"] = {"state": "outdated", "label": "Video outdated", "error": str(error),
                          "reason": "The video status could not be checked."}
     if "file" in info["video"]:
-        info["video"]["url"] = _url(info["video"].pop("file"))
+        info["video"]["url"] = _fresh_url(info["video"].pop("file"))
     return info
 
 
@@ -718,7 +728,8 @@ def audio(path: str):
         raise HTTPException(404)
     if not target.is_file():
         raise HTTPException(404)
-    return FileResponse(target)
+    # Revalidate on every use (the ETag keeps it cheap): files such as chapter.wav are replaced under the same name.
+    return FileResponse(target, headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/open")
