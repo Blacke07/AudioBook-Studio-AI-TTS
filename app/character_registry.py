@@ -10,7 +10,6 @@ import project
 UNCATEGORIZED = {'id': 'uncategorized', 'name': 'Uncategorized', 'description': '', 'voice': 'own'}
 IDENTIFIER = re.compile('[a-zA-Z0-9_-]{1,80}')
 COLOR = re.compile('#[0-9a-fA-F]{6}')
-SHARED_VOICES = 'shared-voices'    # category of the voices minor characters share; they are voices, not speakers
 SOURCE_HASH = re.compile('[0-9a-f]{16}')
 STATUSES = ('approved', 'provisional', 'needs_review')
 
@@ -93,6 +92,7 @@ def organization(data=None):
     if not isinstance(cats, list) or len(cats) > 1000 or not isinstance(people, dict):
         raise ValueError('Invalid categories or character metadata.')
     names = {entry['name'] for entry in data.get('characters', [])}
+    voices = glossary.document_voices(data)
     aliases = {entry['name']: [str(alias) for alias in entry.get('aliases', [])] for entry in data.get('characters', [])}
     ids, titles = set(), set()
     for cat in cats:
@@ -108,7 +108,7 @@ def organization(data=None):
             raise ValueError('Category names must be distinct and at most 160 characters.')
         if not isinstance(cat['description'], str) or len(cat['description']) > 2000:
             raise ValueError('Category description is too long.')
-        if not isinstance(cat['voice'], str) or cat['voice'] not in names | {'own', 'Narrator'}:
+        if not isinstance(cat['voice'], str) or cat['voice'] not in set(voices) | {'own', 'Narrator'}:
             raise ValueError('Choose an existing shared voice or Narrator.')
         ids.add(key)
         titles.add(cat['name'].casefold())
@@ -390,7 +390,7 @@ def register_analysis(rows, entries, volume, proposals=None):
     canonical = {name.casefold(): name for name in existing}
     volume_id = volume_key(volume)
     replacements, added, voices = {}, [], {}
-    shared = {name for name, meta in org['characters'].items() if meta['category'] == SHARED_VOICES}
+    shared = {row[0] for row in glossary.load_voices()}
     for entry in entries:
         name = entry[0]
         known = canonical.get(name.casefold())
@@ -398,12 +398,13 @@ def register_analysis(rows, entries, volume, proposals=None):
             if known != name:
                 replacements[name] = known
             continue
-        entry = list(entry)
+        # a new speaker owns no voice: only the author creates one (the inner voice keeps its whisper)
+        entry = list(entry) if name == glossary.INNER_VOICE else [*entry[:4], glossary.SAME_AS_NARRATOR, '', '', 0]
         added.append(entry)
         canonical[name.casefold()] = name
         proposal = (proposals or {}).get(name, {})
         category = proposal.get('category', 'uncategorized')
-        if category not in {c['id'] for c in org['categories']} or category == SHARED_VOICES:
+        if category not in {c['id'] for c in org['categories']}:
             category = 'uncategorized'
         if proposal.get('voice') in shared:
             voices[name] = proposal['voice']
@@ -438,8 +439,9 @@ def snapshot():
                 entry['read_as'] = entry['name']
     data['organization'] = organization(data)
     volumes = [dict(id=project.volume_id(volume), name=volume['name']) for volume in project.volumes()]
-    return dict(document=data, revision=digest(data), reading=global_rules(data),
-                fixed={entry['name']:bool(fixed_voices.get(entry['name'])) for entry in data['characters']},
+    voices = glossary.document_voices(data)
+    return dict(document=data, revision=digest(data), reading=global_rules(data), voices=voices,
+                fixed={name:bool(fixed_voices.get(name)) for name in [*(e['name'] for e in data['characters']), *voices]},
                 volumes=volumes)
 
 
@@ -599,6 +601,8 @@ def plan(request):
     if not old_names <= {c['name'] for c in data['characters']}:
         raise ValueError('Use New character or Merge for identity changes; edit Video label here.')
     # Quick view edits identity facts and policies, never voice recipes.
+    if data.get('voices', []) != before['document'].get('voices', []):
+        raise ValueError('Edit shared voices in Voice studio.')
     new_by_name = {c['name']:c for c in data['characters']}
     for old in before['document']['characters']:
         new = new_by_name[old['name']]

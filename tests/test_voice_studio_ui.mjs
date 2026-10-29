@@ -74,3 +74,16 @@ test('an approved reference updates only the matching tile counter and data',()=
   const fixed={takes:{angry:{},calm:{}}};ui.referenceChanged(d,'Ada',fixed,root);
   assert.equal(d.characters[1].fixed,fixed);assert.equal(counter.textContent,'Emotions 2/2');assert.equal(unrelatedTouched,false);
 });
+test('shared voices come first as voices, and a character without a voice says so',()=>{
+  const ui=feature(),d=data();
+  d.characters.push({name:'Mature man',library:true,own_voice:true,read_as:'Mature man',aliases:'',note:'an older man',fixed:null});
+  d.characters[0].own_voice=false;
+  const groups=ui.groups(d);
+  assert.deepEqual(Array.from(groups,g=>g.category.name),['Shared voices','Harbor crew','Visitors']);
+  assert.deepEqual(Array.from(groups[0].people,p=>p.c.name),['Mature man']);
+  assert.equal(ui.groups(d,'older')[0].people[0].c.name,'Mature man');
+  const html=ui.catalogue(d);
+  assert.match(html,/Shared voices<\/span><span class="small muted">Voices · 1/);
+  assert.match(html,/Shared voice<\/span>/);
+  assert.match(ui.tile({c:d.characters[0],meta:{status:'approved'}},2),/No voice of its own/);
+});

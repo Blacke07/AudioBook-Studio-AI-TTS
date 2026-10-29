@@ -44,14 +44,14 @@ def apply(preset_id, role):
         project.save_settings(settings)
         fixed_voices.set_sample(NARRATOR, preset["text"])
         return entry
-    rows = glossary.load()
-    row = next((row for row in rows if row[0] == role), None)
+    rows, library = glossary.load(), glossary.load_voices()
+    row = next((row for row in [*rows, *library] if row[0] == role), None)
     if row is None:
         raise ValueError(f"{role} is not in the character glossary.")
     entry = fixed_voices.fix(role, take, preset["text"], origin)
     row[6], row[7] = preset["description"], int(preset["seed"])
     if row[2] == "unknown":
         row[2] = preset["gender"]
-    glossary.save(rows)
+    glossary.save(rows, library)
     fixed_voices.set_sample(role, preset["text"])
     return entry

@@ -469,6 +469,11 @@ def repair_analysis(data: dict = Body(...)):
 FIELDS = ["name", "aliases", "gender", "note", "model", "custom", "design", "seed"]
 
 
+def _voice_row(role):
+    """The glossary row of a character or a shared voice."""
+    return next((row for row in [*glossary.load(), *glossary.load_voices()] if row[0] == role), None)
+
+
 def _fixed_info(role):
     entry = fixed_voices.get(role)
     if not entry:
@@ -485,7 +490,7 @@ def fix_voice(data: dict = Body(...)):
     if not take.is_relative_to(project.PROBES.resolve()) or not take.is_file():
         raise ValueError("This preview is no longer available. Generate another one.")
     role = str(data["role"]).strip()
-    if role != NARRATOR and role not in {row[0] for row in glossary.load()}:
+    if role != NARRATOR and _voice_row(role) is None:
         raise ValueError(f"{role} is not in the character glossary.")
     emotion = emotions.check(data.get("emotion") or emotions.NEUTRAL)
     previous = fixed_voices.get(role) or {}
@@ -585,7 +590,7 @@ def emotion_preview(data: dict = Body(...)):
     if role == NARRATOR:
         recipe = narrator_recipe(settings)
     else:
-        row = next((row for row in glossary.load() if row[0] == role), None)
+        row = _voice_row(role)
         if row is None:
             raise ValueError(f"{role} is not in the character glossary.")
         recipe = read_cast([row], MODEL_NAMES[settings["narrator"]["mode"]], narrator_voice(settings), {role},
@@ -603,13 +608,18 @@ def emotion_preview(data: dict = Body(...)):
 @app.get("/api/characters")
 def characters():
     settings = project.load_settings()
-    rows = glossary.load()
+    rows, library = glossary.load(), glossary.load_voices()
+    reading = voice_rules.global_rules()
+    own = {row[0] for row in glossary.own_voices(rows)}
+    # The shared voices follow the characters with `library` set: Voice studio edits both the same way.
     return {"default_sample": CHARACTER_SAMPLE, "narrator_variation": settings["narrator"]["temperature"],
-            "characters": [{**dict(zip(FIELDS, row)), "read_as":voice_rules.global_rules().get(row[0],row[0]), "fixed": _fixed_info(row[0]),
+            "characters": [{**dict(zip(FIELDS, row)), "read_as": row[0] if shared else reading.get(row[0], row[0]),
+                            "library": shared, "own_voice": shared or row[0] in own, "fixed": _fixed_info(row[0]),
                             "variation": settings["voice_variation"].get(row[0]),
                             "sample": fixed_voices.sample_for(row[0]),
                             "emotion_samples": {key: fixed_voices.emotion_sample(row[0], key)
-                                                for key in emotions.KEYS if key != emotions.NEUTRAL}} for row in rows],
+                                                for key in emotions.KEYS if key != emotions.NEUTRAL}}
+                           for shared, group in ((False, rows), (True, library)) for row in group],
             "emotions": emotions.choices(),
             "duplicates": glossary.duplicate_voices(rows, settings["narrator"]["mode"]),
             "profiles": {"narrator": list(PROFILES),
@@ -621,11 +631,16 @@ def characters():
 
 @app.put("/api/characters")
 def save_characters(data: dict = Body(...)):
-    rows = glossary.save([[item.get(field, "") for field in FIELDS] for item in data["characters"]])
+    shared = {row[0] for row in glossary.load_voices()}
+    edited = [[item.get(field, "") for field in FIELDS] for item in data["characters"]]
+    # Voice studio cannot add or remove a shared voice: a missing one keeps its stored recipe.
+    voices = {row[0]: row for row in glossary.load_voices()}
+    voices.update({row[0]: [row[0], "", *row[2:]] for row in edited if row[0] in shared})
+    rows = glossary.save([row for row in edited if row[0] not in shared], list(voices.values()))
     for item in data["characters"]:
         if str(item.get("sample", "")).strip():
             fixed_voices.set_sample(str(item["name"]), " ".join(str(item["sample"]).split()))
-    for role in set(fixed_voices.load()) - {row[0] for row in rows} - {NARRATOR}:
+    for role in set(fixed_voices.load()) - {row[0] for row in rows} - shared - {NARRATOR}:
         fixed_voices.unfix(role)  # a deleted character takes its fixed voice with it
     return {"count": len(rows)}
 
@@ -660,7 +675,7 @@ def voice_variation(data: dict = Body(...)):
     """A voice's own performance variation, or None to follow the narrator's again. Passages of that voice
     become outdated, like any change of the sound."""
     role = str(data.get("role", "")).strip()
-    if role != NARRATOR and role not in {row[0] for row in glossary.load()}:
+    if role != NARRATOR and _voice_row(role) is None:
         raise ValueError(f"{role or 'This voice'} is not in the character glossary.")
     value = data.get("temperature")
     settings = project.load_settings()
@@ -776,6 +791,9 @@ app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
 
 if __name__ == "__main__":
     character_registry.migrate()
+    import voice_library
+    if (backup := voice_library.migrate()):
+        print(f"The shared voices now live in the voice list. Earlier files: {backup}")
     if "--no-browser" not in sys.argv:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}/")).start()
     print(f"AudioBook Studio: http://127.0.0.1:{PORT}/  (close this window to stop)")

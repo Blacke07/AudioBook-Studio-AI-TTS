@@ -109,6 +109,7 @@ def cast_rows(data):
                      entry.get('model',glossary.SAME_AS_NARRATOR), entry.get('custom_voice',''),
                      entry.get('voice_design',''), entry.get('seed',0)])
     result = glossary.normalize(rows)
+    glossary.check_library(result, glossary.library_rows(data))
     from voice_rules import global_rules
     global_rules(data)
     from character_registry import organization
@@ -260,11 +261,15 @@ def parse_files(files, ignored=()):
     settings = clean_settings(get('settings.json')) if 'settings' in parts else None
     characters, registry, samples = [], {}, {}
     if 'cast' in parts:
+        from voice_library import separate
+        older = get('characters.json')
+        if (newer := separate(older)) is not older:
+            files['characters.json'] = encoded(newer)   # an older package kept the shared voices as characters
         characters = cast_rows(get('characters.json'))
         raw_registry, samples = get('voices/registry.json'), get('voices/samples.json')
         if not isinstance(raw_registry,dict) or not isinstance(samples,dict):
             raise ValueError('Invalid fixed voice registry or samples.')
-        roles = {row[0] for row in characters}|{'Narrator'}
+        roles = {row[0] for row in [*characters, *glossary.library_rows(get('characters.json'))]}|{'Narrator'}
         for role, entry in raw_registry.items():
             glossary.speaker_name(role, allow_reserved=True)
             if role not in roles or not isinstance(entry,dict):
@@ -329,7 +334,7 @@ def collect(parts, snapshot=False):
     if 'cast' in parts:
         files['characters.json'] = encoded(glossary.to_data(glossary.load()))
         # A merged identity may retain its old WAV on disk; export only active roles.
-        active = {row[0] for row in glossary.load()} | {'Narrator'}
+        active = {row[0] for row in [*glossary.load(), *glossary.load_voices()]} | {'Narrator'}
         registry = {role:entry for role,entry in fixed_voices.load().items() if role in active}
         files['voices/registry.json'] = encoded(registry)
         samples = {role:entry for role,entry in fixed_voices.samples().items() if role in active}

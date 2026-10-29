@@ -240,8 +240,20 @@ def plan(incoming, choices):
         for context in new_contexts:
             row('context', context['name'], 'add')
         changed_roles = set()
+        library = {voice[0]:voice for voice in glossary.load_voices()}
+        for voice in glossary.library_rows(incoming_data):
+            if voice[0] in library and voice[0] not in choices.get('voices',[]):
+                row('voice',voice[0],'skip','Keep mine',conflict=True)
+                continue
+            row('voice',voice[0],'update' if voice[0] in library else 'add',conflict=voice[0] in library)
+            library[voice[0]] = voice
+            changed_roles.add(voice[0])
         for item in incoming.characters:
             name = item[0]
+            if name in library:
+                # an older package kept the shared voices as characters; here they are voices only
+                row('character',name,'skip','Already a shared voice here')
+                continue
             if any(name.casefold()==old.casefold() and name!=old for old in by_name):
                 raise ValueError('Character name differs only in letter case: '+name)
             if name in by_name and name not in choices.get('characters',[]):
@@ -263,7 +275,7 @@ def plan(incoming, choices):
             metadata['category'] = category_map[metadata['category']]
             merged_org['characters'][name] = metadata
         merged = list(by_name.values())
-        merged_data = glossary.to_data(merged, read_as=merged_rules)
+        merged_data = glossary.to_data(merged, read_as=merged_rules, voices=list(library.values()))
         merged_data['organization'] = merged_org
         organization(merged_data)
         if (changed_roles or new_contexts) and merged_data != document():

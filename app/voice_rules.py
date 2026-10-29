@@ -34,7 +34,7 @@ def global_rules(data=None):
             if not isinstance(target, str):
                 raise ValueError('Invalid read_as voice.')
             result[entry['name']] = target
-    validate_targets(result, {entry['name'] for entry in data.get('characters', [])})
+    validate_targets(result, {entry['name'] for entry in data.get('characters', [])}, set(glossary.document_voices(data)))
     return result
 
 
@@ -44,11 +44,12 @@ def explicit_rules(data=None):
     return {entry['name']: entry['read_as'] for entry in data.get('characters', []) if 'read_as' in entry} if isinstance(data, dict) else {}
 
 
-def validate_targets(rules, names):
+def validate_targets(rules, speakers, voices):
+    """Rules map characters to voices: an own voice, a shared voice or the narrator's."""
     if not isinstance(rules, dict):
         raise ValueError('Invalid character voice rules.')
     for speaker, target in rules.items():
-        if speaker not in names or target not in names | {NARRATOR}:
+        if speaker not in speakers or target not in voices | {NARRATOR}:
             raise ValueError(f'Unknown speaker or reading voice: {speaker} → {target}. Reset the rule before removing that character.')
 
 
@@ -110,10 +111,11 @@ def reconcile(old, new):
 
 def effective(script, rows, rules=None):
     names = {row[0] for row in rows}
+    voices = set(glossary.voice_names(rows))
     general = global_rules() if rules is None else rules
-    validate_targets(general, names)
+    validate_targets(general, names, voices)
     local = validate_script(script)
-    validate_targets(local.get('characters', {}), names)
+    validate_targets(local.get('characters', {}), names, voices)
     if local.get('conflicts'):
         raise ValueError('Voice rules need review after the text or speaker assignments changed. Open Voice rules in this chapter.')
     overrides = {entry['row']:entry['read_as'] for entry in local.get('lines', [])}
@@ -123,7 +125,9 @@ def effective(script, rows, rules=None):
         if speaker in ('Scene break', 'Unassigned'):
             continue
         target = overrides.get(index, local.get('characters', {}).get(speaker, general.get(speaker, speaker)))
-        if target not in names | {NARRATOR}:
+        if target not in voices | {NARRATOR}:
+            if target == speaker and speaker in names:
+                raise ValueError(f'{speaker} has no voice of their own. Choose a reading voice in Characters.')
             raise ValueError('Unknown reading voice: ' + target)
         result[index] = target
     return result
@@ -154,7 +158,7 @@ def cast(volume=None):
                            **org['characters'][row[0]],
                            'lines':counts[row[0]], 'chapters':len(chapters.get(row[0], set())),
                            'fixed':bool(fixed_voices.get(row[0]))} for row in rows],
-            'voices':[NARRATOR, *[row[0] for row in rows]],
+            'voices':[NARRATOR, *glossary.voice_names(rows)],
             'can_undo':transfer.target(UNDO).is_file()}
 
 
@@ -172,6 +176,7 @@ def plan(request):
     request = {key:request[key] for key in ('scope','speaker','read_as','volume','stem','row','source_hash') if key in request}
     rows = glossary.load()
     names = {row[0] for row in rows}
+    voices = set(glossary.voice_names(rows))
     general = global_rules()
     changed = dict(general)
     writes = {}
@@ -181,7 +186,7 @@ def plan(request):
     if scope != 'clear_conflicts':
         if speaker not in names | {NARRATOR} or scope != 'line' and speaker == NARRATOR:
             raise ValueError('Choose an existing character.')
-        if target is not None and target not in names | {NARRATOR}:
+        if target is not None and target not in voices | {NARRATOR}:
             raise ValueError('Choose an existing reading voice.')
     selected = None
     old_script = new_script = None

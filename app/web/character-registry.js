@@ -47,7 +47,9 @@ const CharacterRegistry = {
   },
   options(items,current) { return items.map(([v,label])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(label)}</option>`).join(''); },
   voices(current,inherit=true,exclude='') {
-    return this.options([...(inherit?[['','Inherit category']]:[]),['own','Own voice'],['Narrator','Narrator'],...this.state.document.characters.filter(c=>c.name!==exclude).map(c=>[c.name,c.name])],current);
+    // Reading voices are voices: the characters' own and the shared ones, never a character without a voice.
+    const voices=this.state.voices||this.state.document.characters.map(c=>c.name);
+    return this.options([...(inherit?[['','Inherit category']]:[]),['own','Own voice'],['Narrator','Narrator'],...voices.filter(name=>name!==exclude).map(name=>[name,name])],current);
   },
   readingInfo(c,cat) {
     const explicit=Object.hasOwn(c,'read_as'),target=explicit?c.read_as:(cat.voice==='own'?c.name:cat.voice);

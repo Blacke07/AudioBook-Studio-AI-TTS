@@ -318,7 +318,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         scenes.append(scene)
         if item.kind == "pause":
             scene += 1
-    from character_registry import SHARED_VOICES, alias_resolver, contexts_for, document, organization
+    from character_registry import alias_resolver, contexts_for, document, organization
     registry_data = document()
     registry = organization(registry_data)
     if volume and chapter:
@@ -361,9 +361,9 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         character['category'] = category
         character['priority'] = priorities.get(category, len(priorities))
     characters.sort(key=lambda c:c['priority'])
-    shared_names = {name for name, meta in registry['characters'].items() if meta['category'] == SHARED_VOICES}
-    shared_voices = [{"name": row[0], "description": row[3]} for row in entries if row[0] in shared_names]
-    characters = [c for c in characters if c['name'] not in shared_names]
+    library = glossary.library_rows(registry_data)
+    shared_names = {row[0] for row in library}
+    shared_voices = [{"name": row[0], "description": row[3]} for row in library]
     try:
         for batch_number, batch_ids in enumerate(batches):
             target_ids = [i for i in batch_ids if i in unassigned]
@@ -469,9 +469,10 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
              f"{counts['context']} context assignments, {counts['unclear']} unclear."
              + (f" {inner} thoughts (angle brackets or backticks) read by {INNER_VOICE}." if inner else "")]
     if added:
-        lines.append("New characters added to the glossary (review their gender and voice): " + ", ".join(
-            f"{row[0]} ({row[2]}, {row[6]} / {row[5]})" for row in added))
-    for group in glossary.duplicate_voices(entries, narrator_mode_name, set(speakers)):
+        lines.append("New characters added to the glossary (review their gender and reading voice): " + ", ".join(
+            f"{row[0]} ({row[2]})" for row in added))
+    # new speakers own no voice (they read with a shared one), so only the known cast can sound alike
+    for group in glossary.duplicate_voices(entries, narrator_mode_name, set(speakers) - {row[0] for row in added}):
         lines.append("Warning: the same voice is used by " + " and ".join(group) + " — may be confused.")
     if counts["unclear"]:
         lines.append("Unclear lines remain Unassigned. Assign their speakers before generating audio.")

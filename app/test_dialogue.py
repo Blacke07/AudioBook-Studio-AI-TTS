@@ -128,10 +128,14 @@ class DialogueTests(unittest.TestCase):
         self.assertEqual((cast["Riley"].mode, cast["Riley"].speaker), (CUSTOM_VOICE, "Sohee"))
 
     def test_only_speaking_characters_need_a_complete_voice(self):
-        rows = [["Silent", "", "male", "", "CustomVoice", "", "", 1], ["A", "", "male", "", "", "Aiden", "", 2]]
+        rows = [["Silent", "", "male", "", "CustomVoice", "", "a low voice", 1], ["A", "", "male", "", "", "Aiden", "", 2]]
         self.assertIn("A", read_cast(rows, CUSTOM_VOICE, self.voice, {"A"}))
         with self.assertRaisesRegex(ValueError, "Silent"):
             read_cast(rows, CUSTOM_VOICE, self.voice)
+
+    def test_a_character_without_a_recipe_owns_no_voice(self):
+        rows = [["Mother", "", "female", "", "same as narrator", "", "", 0], ["A", "", "male", "", "", "Aiden", "", 2]]
+        self.assertEqual(set(read_cast(rows, CUSTOM_VOICE, self.voice)), {NARRATOR, "A"})
 
     def test_generation_needs_at_most_one_model_switch(self):
         other = Voice("Sohee", "", "", 1, CUSTOM_VOICE)

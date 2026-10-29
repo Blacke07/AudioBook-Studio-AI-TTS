@@ -4,14 +4,18 @@ const VoiceStudio = {
   groups(data, query = characterQuery) {
     const registry = data.registry, org = registry.document.organization;
     const byName = new Map(data.characters.map((c, i) => [c.name, {c, i}]));
-    return org.categories.map((category, index) => ({category, priority: index + 1,
+    // The shared voices belong to no category: they come first, as the voices minor characters read with.
+    const shared = data.characters.flatMap((c, i) => c.library
+      && (!query || [c.name, c.note].join(' ').toLowerCase().includes(query)) ? [{c, i, meta: {status: 'approved'}}] : []);
+    return [...(shared.length ? [{category: {id: 'shared-voices', name: 'Shared voices'}, shared: true, people: shared}] : []),
+      ...org.categories.map((category, index) => ({category, priority: index + 1,
       people: registry.document.characters.flatMap((record) => {
         const person = byName.get(record.name), meta = org.characters[record.name];
         if (!person || meta.category !== category.id) return [];
         if (this.volume !== 'all' && meta.volumes?.length && !meta.volumes.includes(this.volume)) return [];
         if (query && ![record.name, meta.label, person.c.aliases, person.c.note].join(' ').toLowerCase().includes(query)) return [];
         return [{...person, meta}];
-      })}));
+      })}))];
   },
   selection(data) {
     if (this.volume !== 'all' && !data.registry.volumes.some(v => v.id === this.volume)) this.volume = 'all';
@@ -24,16 +28,17 @@ const VoiceStudio = {
     const count = Object.keys(c.fixed?.takes || {}).length;
     return `<button type="button" class="studio-character ${c.name === this.selected ? 'selected' : ''}" data-studio-character="${esc(c.name)}" aria-pressed="${c.name === this.selected}" aria-controls="studio-editor" title="${esc(c.name)}">
       <span class="studio-tile-name"><i class="dot" style="background:${colorFor(c.name)}"></i><b>${esc(c.name)}</b></span>
-      <span class="studio-reading" title="Read as: ${esc(c.read_as || c.name)}">Read as: ${esc(c.read_as || c.name)}</span>
-      <span class="studio-tile-status"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${icon(c.fixed ? 'lock' : 'info')} ${c.fixed ? 'Fixed voice' : 'Voice to review'}</span><span class="small muted" data-studio-emotions>Emotions ${count}/${emotions}</span></span>
+      <span class="studio-reading" title="Read as: ${esc(c.read_as || c.name)}">${c.library ? 'Shared voice' : 'Read as: ' + esc(c.read_as || c.name)}</span>
+      ${c.own_voice === false ? '<span class="studio-tile-status small muted">No voice of its own</span>'
+        : `<span class="studio-tile-status"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${icon(c.fixed ? 'lock' : 'info')} ${c.fixed ? 'Fixed voice' : 'Voice to review'}</span><span class="small muted" data-studio-emotions>Emotions ${count}/${emotions}</span></span>`}
       ${meta.status !== 'approved' ? `<span class="studio-review small">${meta.status === 'provisional' ? 'Provisional identity' : 'Identity needs review'}</span>` : ''}</button>`;
   },
   catalogue(data) {
     const groups = this.groups(data), total = (data.emotions || []).filter(e => e.key !== 'neutral').length;
     if (!groups.some(g => g.people.length)) return '<p class="empty">No characters match these filters.</p>';
-    return groups.filter(g => g.people.length).map(({category, priority, people}) =>
+    return groups.filter(g => g.people.length).map(({category, priority, people, shared}) =>
       `<details class="studio-category"${categoryStyle(category)} data-studio-category="${esc(category.id)}" ${!this.closed.has(category.id) || characterQuery ? 'open' : ''}>
-        <summary><span>${esc(category.name)}</span><span class="small muted">Priority ${priority} · ${people.length}</span></summary>
+        <summary><span>${esc(category.name)}</span><span class="small muted">${shared ? 'Voices' : 'Priority ' + priority} · ${people.length}</span></summary>
         <div class="studio-tiles">${people.map(person => this.tile(person, total)).join('')}</div></details>`).join('');
   },
   capture(root) {

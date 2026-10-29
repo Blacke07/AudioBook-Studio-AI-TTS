@@ -98,23 +98,25 @@ class RegistryTests(unittest.TestCase):
                          [project.volume_id(volume)])
 
     def test_a_new_speaker_reads_with_the_shared_voice_gemma_chose_or_with_the_narrator(self):
-        state = self.draft()
-        org = state['document']['organization']
-        org['categories'].append(dict(id=registry.SHARED_VOICES, name='Shared voices', description='', voice='Narrator'))
-        org['characters']['Morgan']['category'] = registry.SHARED_VOICES
-        self.save(state)
+        glossary.save(glossary.load(), [['Mature man', '', 'male', 'An older man', 'CustomVoice', 'Ryan', '', 30]])
         entries = glossary.load()
         for name in ('The guard', 'The clerk', 'The cook'):
             entries += [glossary.propose(name, 'male', entries)]
-        proposals = {'The guard': {'voice': 'Morgan'}, 'The clerk': {'voice': 'Narrator'},
-                     'The cook': {'category': registry.SHARED_VOICES, 'voice': 'Nobody'}}
+        proposals = {'The guard': {'voice': 'Mature man'}, 'The clerk': {'voice': 'Narrator'},
+                     'The cook': {'category': 'missing', 'voice': 'Nobody'}}
         registry.register_analysis([['The guard', 'Wait.', False], ['The clerk', 'Stop.', False],
                                     ['The cook', 'Eat.', False]], entries, 'Lantern', proposals)
         rules = voice_rules.global_rules()
-        self.assertEqual((rules['The guard'], rules['The clerk'], rules['The cook']), ('Morgan', 'Narrator', 'Narrator'))
-        people = registry.organization()['characters']
-        self.assertEqual(people['The guard']['category'], 'uncategorized')
-        self.assertEqual(people['The cook']['category'], 'uncategorized', 'A new speaker is never filed among the voices')
+        self.assertEqual((rules['The guard'], rules['The clerk'], rules['The cook']), ('Mature man', 'Narrator', 'Narrator'))
+        self.assertEqual(registry.organization()['characters']['The cook']['category'], 'uncategorized')
+        self.assertEqual([row[0] for row in glossary.own_voices(glossary.load())], ['Ada', 'Morgan'],
+                         'A new speaker owns no voice: only the author creates one')
+        self.assertNotIn('Mature man', {row[0] for row in glossary.load()}, 'A shared voice is not a character')
+        self.assertEqual(glossary.voice_names(glossary.load()), ['Ada', 'Morgan', 'Mature man'])
+
+    def test_a_shared_voice_cannot_share_a_name_with_a_character(self):
+        with self.assertRaisesRegex(ValueError, 'both a character and a shared voice'):
+            glossary.save(glossary.load(), [['ada', '', 'female', '', 'CustomVoice', 'Ryan', '', 3]])
 
     def test_a_category_color_is_optional_and_must_be_a_hex_color(self):
         state = self.draft()

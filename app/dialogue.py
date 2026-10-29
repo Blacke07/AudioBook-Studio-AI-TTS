@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 import re
 
 import fixed_voices
-from glossary import INNER_VOICE, SAME_AS_NARRATOR, normalize
+from glossary import INNER_VOICE, SAME_AS_NARRATOR, load_voices, normalize
 from voices import BASE_CLONE, CHARACTER_DELIVERY, CUSTOM_PRESETS, MODEL_NAMES, describe, voice_parameters
 
 NARRATOR = "Narrator"
@@ -333,13 +333,17 @@ def default_cast():
 
 
 def read_cast(rows, mode, narrator, names=None, use_fixed=True):
-    """Voices for the narrator and characters; `names` limits checking to those who actually speak.
-    use_fixed=False gives the description recipe even for a fixed voice (to audition new takes)."""
+    """Voices by name: the narrator's, the characters' own and the shared ones; `names` limits checking to the
+    voices actually heard. use_fixed=False gives the description recipe even for a fixed voice (to audition
+    new takes). A character without a recipe or an approved take owns no voice and reads with another one."""
     voices = {NARRATOR: narrator}
-    for name, _aliases, _gender, _note, model, custom, design, seed in normalize(rows):
+    rows = normalize(rows)
+    own = {row[0] for row in rows}
+    fixed_roles = fixed_voices.load()
+    for name, _aliases, _gender, _note, model, custom, design, seed in [*rows, *(row for row in load_voices() if row[0] not in own)]:
         if name in (NARRATOR, UNASSIGNED, PAUSE):
             raise ValueError(f"Reserved character name: {name}")
-        if names is not None and name not in names:
+        if names is not None and name not in names or not (custom or design or name in fixed_roles):
             continue
         character_mode = mode if model == SAME_AS_NARRATOR else MODEL_NAMES[model]
         instruction = CHARACTER_DELIVERY

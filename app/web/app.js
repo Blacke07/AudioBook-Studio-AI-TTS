@@ -918,10 +918,8 @@ function bindEmotionTakes(root, role, refresh) {
 /* The main cast is every character who reads with their own voice. The shared voices are meant to be heard
    again in many characters, so voice checks leave them out. */
 function mainCastNames(d) {
-  const organization = d.registry?.document?.organization;
   const reading = d.registry?.reading || {};
-  return new Set((d.characters || []).filter((character) =>
-    organization?.characters?.[character.name]?.category !== 'shared-voices'
+  return new Set((d.characters || []).filter((character) => !character.library && character.own_voice !== false
     && (reading[character.name] || character.name) === character.name).map((character) => character.name));
 }
 
@@ -962,11 +960,14 @@ function drawCharacters() {
     ${selected ? [selected].map(({ c, i }) => {
       const design = d.profile_texts[c.design] ? c.design : "__custom";
       const text = d.profile_texts[c.design] || c.design;
+      const voiceless = c.own_voice === false;
       return `<div class="card char-card" data-i="${i}">
-        <span class="small muted">Character settings</span>
+        <span class="small muted">${c.library ? 'Shared voice · minor characters read with it' : 'Character settings'}</span>
         <div class="char-head"><i class="dot" style="background:${colorFor(c.name)};width:14px;height:14px"></i><h3 style="flex:1">${esc(c.name)}</h3>
           <div class="seg" aria-label="Gender">${[["male", "♂"], ["female", "♀"], ["unknown", "?"]].map(([g, sign]) => `<button class="${c.gender === g ? "on" : ""}" data-gender="${g}" title="${g}" aria-label="${g}" aria-pressed="${c.gender === g}">${sign}</button>`).join("")}</div></div>
-        <button class="btn small" data-reading-voice>Read as: ${esc(c.read_as || c.name)}</button>
+        <button class="btn small ${c.library ? 'hidden' : ''}" data-reading-voice>Read as: ${esc(c.read_as || c.name)}</button>
+        ${voiceless ? `<p class="small muted">No voice of its own: it reads with ${esc(c.read_as === c.name ? 'the voice chosen above' : c.read_as)}. Write a description under Voice creation to give it one.</p>` : ''}
+        <div class="${voiceless ? 'hidden' : ''}">
         <div class="row between"><span class="${c.fixed ? 'fixed-status' : 'review-status'}">${c.fixed ? icon('lock')+' Fixed voice' : 'Voice to review'}</span>${fieldHelp('Fixed voice','An approved recording keeps the voice identity. Unfix returns to the recipe and can make generated chapters outdated.')}
         <button class="btn" data-listen>${icon("play")} Listen</button></div>
         <audio data-audio controls class="hidden" style="width:100%"></audio>
@@ -977,9 +978,11 @@ function drawCharacters() {
         ${(() => { const shown = c.variation ?? d.narrator_variation; return `<label class="field"><span>Performance variation: <b data-variation-value>${shown}</b>${c.variation == null ? ' (the narrator’s)' : ''} ${fieldHelp('Performance variation','How freely this voice may vary its delivery. Lower values are more predictable. Without its own value a voice follows the Narrator page. Changing it makes this voice’s generated passages outdated; the fixed reference stays.')}</span>
           <input type="range" data-variation min="0.3" max="1.2" step="0.05" value="${shown}" aria-label="Performance variation of ${esc(c.name)}"></label>
           <div class="row small"><button type="button" class="btn ghost small" data-variation-reset ${c.variation == null ? 'disabled' : ''}>Follow the narrator (${d.narrator_variation})</button><a href="#/narrator">Narrator settings</a></div>`; })()}
-        <details class="character-section" data-studio-section="detection"><summary>Speaker detection</summary>
-          <label class="field"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
-          <label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>
+        </div>
+        <details class="character-section" data-studio-section="detection"><summary>${c.library ? 'Who this voice suits' : 'Speaker detection'}</summary>
+          <label class="field ${c.library ? 'hidden' : ''}"><span>Aliases ${fieldHelp('Aliases','Other names used for this character in the text. They help identify the speaker; they are not spoken.')}</span><input type="text" data-f="aliases" value="${esc(c.aliases)}" placeholder="e.g. Ally, Doctor"></label>
+          ${c.library ? `<label class="field"><span>Description for the dialogue model ${fieldHelp('Shared voice description','Sent to the dialogue model, which reads a new minor character with the shared voice that suits them. It is not spoken and does not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>`
+            : `<label class="field"><span>Context for speaker detection ${fieldHelp('Speaker detection context','Notes sent to the dialogue model when this character or an alias appears in the chapter. They help identify who speaks; they are not spoken and do not change the voice.')}</span><textarea data-f="note" rows="2">${esc(c.note)}</textarea></label>`}
         </details>
         <details class="character-section" data-studio-section="creation"><summary>Voice creation</summary>
           <label class="field"><span>Default preview for characters without their own sample</span><input type="text" id="sample" value="${esc(characterSample)}"></label>
@@ -992,7 +995,7 @@ function drawCharacters() {
           <div class="row"><button class="btn" data-preset-pick>${icon('book')} Use a preset voice</button><button class="btn" data-candidates>${icon('dice')} Find a more distinct voice</button></div>
           <div class="takes" data-candidate-list></div>
         </details>
-        <div class="row end"><button class="btn ghost icon-only danger" data-delete title="Remove from glossary">${icon('trash')}</button></div>
+        <div class="row end ${c.library ? 'hidden' : ''}"><button class="btn ghost icon-only danger" data-delete title="Remove from glossary">${icon('trash')}</button></div>
       </div>`;
     }).join("") : '<div class="empty">Select a character, or change the filters to see your cast.</div>'}</aside></div>`;
   CharacterRegistry.studioHeader();

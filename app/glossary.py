@@ -1,10 +1,15 @@
-"""Character glossary: identity facts for attribution and one fixed voice recipe per character."""
+"""Character glossary: identity facts for attribution, and the voices they read with.
+
+A character may own a voice (its recipe is stored with it, its approved take under its name). A shared voice
+belongs to nobody: it lives in the `voices` list next to the characters and is never a speaker. Both kinds use
+the same row shape here: name, aliases, gender, note, model, CustomVoice speaker, description, seed."""
 import json
 from pathlib import Path
 import re
 import unicodedata
 from threading import RLock
 
+import fixed_voices
 from voices import CHARACTER_PROFILES, CUSTOM_POOLS, character_variants, custom_speaker, describe
 
 from project import ROOT
@@ -91,26 +96,85 @@ def load():
                       for item in data["characters"]])
 
 
-def save(rows):
-    """Write the whole glossary as shown in the table; placeholders are never stored."""
+def library_rows(data):
+    """The shared voices of a characters.json document, as glossary rows (no aliases)."""
+    items = data.get("voices", []) if isinstance(data, dict) else []
+    if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+        raise ValueError("Invalid shared voice list.")
+    return normalize([[item.get("name"), "", GENDER_LABELS.get(item.get("gender"), "unknown"), item.get("note", ""),
+                       item.get("model", SAME_AS_NARRATOR), item.get("custom_voice", ""), item.get("voice_design", ""),
+                       item.get("seed", 0)] for item in items])
+
+
+def load_voices():
+    if not GLOSSARY_FILE.exists():
+        return []
+    return library_rows(json.loads(GLOSSARY_FILE.read_text(encoding="utf-8")))
+
+
+def has_recipe(row):
+    return bool(row[5] or row[6])
+
+
+def own_voices(rows):
+    """Characters that own a voice: a recipe, or an approved take kept under their name."""
+    fixed = fixed_voices.load()
+    return [row for row in normalize(rows) if has_recipe(row) or row[0] in fixed]
+
+
+def voice_names(rows, library=None):
+    """Every voice a character can read with, except the narrator: own voices first, then the shared ones."""
+    library = load_voices() if library is None else library
+    return [*(row[0] for row in own_voices(rows)), *(row[0] for row in library)]
+
+
+def document_voices(data):
+    """voice_names() for a characters.json document that may not be saved yet."""
+    if not isinstance(data, dict):
+        return []
+    fixed = fixed_voices.load()
+    own = [entry["name"] for entry in data.get("characters", [])
+           if entry.get("custom_voice") or entry.get("voice_design") or entry["name"] in fixed]
+    return [*own, *(row[0] for row in library_rows(data))]
+
+
+def check_library(rows, library):
+    taken = {row[0].casefold() for row in rows}
+    for row in library:
+        if row[0].casefold() in taken:
+            raise ValueError(f"{row[0]} is both a character and a shared voice. Rename one of them.")
+
+
+def save(rows, voices=None):
+    """Write the whole glossary as shown in the table; placeholders are never stored. `voices` replaces the
+    shared voices; by default they are kept."""
     rows = [row for row in normalize(rows) if not PLACEHOLDER.fullmatch(row[0])]
     with _LOCK:
-        _write(rows)
+        _write(rows, voices)
     return rows
 
 
-def to_data(rows, read_as=None):
+def to_data(rows, read_as=None, voices=None):
     from voice_rules import explicit_rules, validate_targets
+    source = json.loads(GLOSSARY_FILE.read_text(encoding='utf-8')) if GLOSSARY_FILE.exists() else {}
+    library = library_rows(source) if voices is None else normalize(voices)
+    check_library(rows, library)
     rules = explicit_rules() if read_as is None else read_as
     names = {row[0] for row in rows}
     rules = {name:target for name,target in rules.items() if name in names}
-    validate_targets(rules, names)
-    result = {"version": 2, "characters": [{
-        "name": name, "aliases": aliases_of(aliases), "gender": GENDERS[gender], "note": note, "model": model,
-        "custom_voice": custom, "voice_design": design, "seed": seed,
+    validate_targets(rules, names, set(voice_names(rows, library)))
+
+    def recipe(model, custom, design, seed):
+        return {"model": model, "custom_voice": custom, "voice_design": design, "seed": seed}
+
+    result = {"version": 3, "voices": [{
+        "name": name, "gender": GENDERS[gender], "note": note, **recipe(model, custom, design, seed),
+    } for name, _aliases, gender, note, model, custom, design, seed in library], "characters": [{
+        "name": name, "aliases": aliases_of(aliases), "gender": GENDERS[gender], "note": note,
+        # a character without a recipe owns no voice: it reads with a shared voice or the narrator's
+        **(recipe(model, custom, design, seed) if custom or design else {}),
         **({"read_as":rules[name]} if name in rules else {}),
     } for name, aliases, gender, note, model, custom, design, seed in rows]}
-    source = json.loads(GLOSSARY_FILE.read_text(encoding='utf-8')) if GLOSSARY_FILE.exists() else {}
     if isinstance(source, dict) and 'organization' in source:
         from character_registry import organization
         metadata = source['organization']
@@ -119,8 +183,8 @@ def to_data(rows, read_as=None):
     return result
 
 
-def _write(rows):
-    data = to_data(rows)
+def _write(rows, voices=None):
+    data = to_data(rows, voices=voices)
     temporary = GLOSSARY_FILE.with_suffix(".tmp")
     try:
         temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -162,7 +226,7 @@ def duplicate_voices(rows, narrator_mode_name, names=None):
     """Pairs of characters (optionally limited to `names`) that would sound like the same recipe."""
     groups = {}
     for row in normalize(rows):
-        if names is None or row[0] in names:
+        if has_recipe(row) and (names is None or row[0] in names):
             groups.setdefault(voice_key(row, narrator_mode_name), []).append(row[0])
     return [group for group in groups.values() if len(group) > 1]
 

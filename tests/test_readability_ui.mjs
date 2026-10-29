@@ -36,7 +36,7 @@ test('character template folds detection and creation, preserving all wired fiel
  const template=app.slice(app.indexOf('return `<div class="card char-card"'),app.indexOf('  $("#voice-guide").onclick'));
  for(const key of ['aliases','note','sample','model','custom','seed']) assert.match(template,new RegExp('data-f="'+key+'"'));
  for(const key of ['listen','reading-voice','profile','description','dice','preset-pick','candidates','candidate-list','audio','fix','unfix','delete'])assert.ok(template.includes('data-'+key),key);
- assert.match(template,/<details class="character-section" data-studio-section="detection"><summary>Speaker detection/);assert.match(template,/<details class="character-section" data-studio-section="creation"><summary>Voice creation/);
+ assert.match(template,/<details class="character-section" data-studio-section="detection"><summary>\$\{c\.library \? 'Who this voice suits' : 'Speaker detection'\}/);assert.match(template,/<details class="character-section" data-studio-section="creation"><summary>Voice creation/);
  assert.match(template,/data-studio-section="reference" open/);assert.doesNotMatch(template,/data-studio-section="(?:detection|creation)" open/);assert.match(template,/href="#\/narrator"/);
  assert.ok(template.indexOf('data-listen')<template.indexOf('Speaker detection'));
 });
