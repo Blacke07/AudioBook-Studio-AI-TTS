@@ -97,6 +97,23 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(registry.organization()['characters']['The guard']['volumes'],
                          [project.volume_id(volume)])
 
+    def test_a_new_speaker_joins_a_shared_voice_category_but_never_one_with_own_voices(self):
+        state = self.draft()
+        state['document']['organization']['categories'] += [
+            dict(id='guests', name='Guests', description='', voice='Morgan'),
+            dict(id='mains', name='Mains', description='', voice='own')]
+        self.save(state)
+        entries = glossary.load()
+        entries += [glossary.propose('The guard', 'male', entries)]
+        entries += [glossary.propose('The clerk', 'male', entries)]
+        proposals = {'The guard': {'category': 'guests'}, 'The clerk': {'category': 'mains'}}
+        registry.register_analysis([['The guard', 'Wait.', False], ['The clerk', 'Stop.', False]],
+                                   entries, 'Lantern', proposals)
+        people = registry.organization()['characters']
+        self.assertEqual((people['The guard']['category'], people['The clerk']['category']), ('guests', 'uncategorized'))
+        rules = voice_rules.global_rules()
+        self.assertEqual((rules['The guard'], rules['The clerk']), ('Morgan', 'Narrator'))
+
     def test_needs_review_cannot_use_provisional_switch(self):
         data=self.draft()['document'];data['organization']['allow_provisional']=True
         data['organization']['characters']['Ada']['status']='needs_review'

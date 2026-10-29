@@ -915,13 +915,26 @@ function bindEmotionTakes(root, role, refresh) {
   });
 }
 
+/* The main cast is every character whose category keeps its own voices and who reads with their own voice;
+   shared-cast voices are meant to be heard again, so voice checks leave them out. */
+function mainCastNames(d) {
+  const organization = d.registry?.document?.organization;
+  const reading = d.registry?.reading || {};
+  const sharedCategories = new Set((organization?.categories || []).filter((category) => category.voice !== 'own').map((category) => category.id));
+  return new Set((d.characters || []).filter((character) =>
+    !sharedCategories.has(organization?.characters?.[character.name]?.category)
+    && (reading[character.name] || character.name) === character.name).map((character) => character.name));
+}
+
 function drawCharacters() {
   VoiceStudio.capture(view);
   const d = characterData;
   const profileNames = (gender) => [...(d.profiles[gender] || []), ...(gender === "unknown" ? [] : d.profiles.unknown || []), ...d.profiles.narrator];
   const selected = VoiceStudio.selection(d);
   const genderKey = { male: "male", female: "female", unknown: "unknown" };
-  const pairs = d.similarity?.pairs || [];
+  const main = mainCastNames(d);
+  const pairs = (d.similarity?.pairs || []).filter((p) => main.has(p.a) && main.has(p.b));
+  const duplicates = (d.duplicates || []).map((group) => group.filter((name) => main.has(name))).filter((group) => group.length > 1);
   const confusable = pairs.filter((p) => p.score >= (d.similarity.confusable || 0.5));
   const closestTo = (name) => pairs.filter((p) => p.a === name || p.b === name).map((p) => ({ name: p.a === name ? p.b : p.a, score: p.score }))[0];
   view.innerHTML = `
@@ -936,11 +949,12 @@ function drawCharacters() {
       <div class="row"><button class="btn small" id="voice-guide">Voice personality guide</button>
         <button class="btn small" id="voice-guide-example">View complete example</button></div>
     </div></details>
-    <details class="studio-checks" data-studio-browser-section="checks"><summary>Voice checks · ${d.duplicates.length + confusable.length} warnings</summary>
-    ${d.duplicates.length ? `<div class="banner">${icon("flag")}<div><b>Identical voices:</b> ${d.duplicates.map((g) => esc(g.join(" and "))).join("; ")}. They may be hard to distinguish in the same scene.</div></div>` : ""}
+    <details class="studio-checks" data-studio-browser-section="checks"><summary>Voice checks · ${duplicates.length + confusable.length} warnings</summary>
+    <p class="small muted">Only the main cast is compared. Characters that share a voice are meant to sound alike.</p>
+    ${duplicates.length ? `<div class="banner">${icon("flag")}<div><b>Identical voices:</b> ${duplicates.map((g) => esc(g.join(" and "))).join("; ")}. They may be hard to distinguish in the same scene.</div></div>` : ""}
     ${confusable.length ? `<div class="banner">${icon("flag")}<div><b>Similar fixed voices</b> (voice fingerprint, 1 = identical): ${confusable.map((p) => `${esc(p.a)} ↔ ${esc(p.b)} <b>${p.score.toFixed(2)}</b>`).join(" · ")}.
       For one of them, choose <b>“Find a more distinct voice”</b> to compare up to 3 new takes from the same description, ranked by their difference from the other voices.</div></div>` : ""}
-    ${!d.duplicates.length && !confusable.length ? '<p class="small muted">No duplicate or similar fixed voices were flagged.</p>' : ''}</details>
+    ${!duplicates.length && !confusable.length ? '<p class="small muted">No duplicate or similar fixed voices were flagged.</p>' : ''}</details>
     <div class="studio-filters">
       <label class="field"><span>Search</span><input type="text" id="query" value="${esc(characterQuery)}" placeholder="name, alias or context"></label>
       <label class="field"><span>Volume</span><select id="studio-volume"><option value="all">All volumes</option>${d.registry.volumes.map(v => `<option value="${esc(v.id)}" ${VoiceStudio.volume === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>

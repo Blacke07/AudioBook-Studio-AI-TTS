@@ -398,7 +398,9 @@ def register_analysis(rows, entries, volume, proposals=None):
         canonical[name.casefold()] = name
         proposal = (proposals or {}).get(name, {})
         category = proposal.get('category', 'uncategorized')
-        if category not in {c['id'] for c in org['categories']}:
+        # A new speaker may join a shared-voice category; a category with its own voices is the author's choice.
+        shared = {c['id'] for c in org['categories'] if c['voice'] != 'own'}
+        if category not in shared:
             category = 'uncategorized'
         meta = dict(category=category, status='provisional', label=name,
                     reason=proposal.get('reason') or 'New speaker identified during analysis; review the passages.')

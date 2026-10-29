@@ -62,8 +62,13 @@ not make that character the speaker of the next line; ask who would say these wo
 If the identity is not established, use speaker=null, basis=unclear. Do not assign Narrator to dialogue.
 Gender: use the glossary, or explicit pronouns/descriptions in the story; otherwise unknown.
 Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
-Give a brief reason (at most twelve words). For a new speaker you may suggest a category ID from categories.
-Category order is author priority, never evidence of who speaks. Never prefer a major character over textual evidence.
+Give a brief reason (at most twelve words). Category order is author priority, never evidence of who speaks.
+Never prefer a major character over textual evidence.
+A speaker who is not in `characters` is a new speaker, and it never gets a voice of its own. Always return its
+`category`: the ID of a shared-voice category (its `voice` is not "own") whose name and description match the
+speaker's gender and age as the story shows them. A figure who speaks only a line or two, or whose gender and age the
+story does not show, goes to a category whose `voice` is "Narrator". Never choose a category whose `voice` is "own";
+those belong to the author's main cast.
 `narrative_contexts` names the verified scene contexts of the requested lines. They may disambiguate a role used by
 different people, but they are never proof by themselves. An alias applies only in the volume and context the author
 scoped it to; never carry a scoped alias into another context or invent an identity because the current volume is not listed.
