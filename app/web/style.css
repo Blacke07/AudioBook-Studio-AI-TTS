@@ -150,9 +150,9 @@ svg.icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-w
    It stays fixed while scrolling, reveals itself on hover or keyboard focus, and never
    covers the reading column. See parentRoute() for the page it returns to. */
 .back { position: fixed; left: 250px; top: 50%; transform: translateY(-50%); z-index: 40;
-  display: grid; place-items: center; width: 28px; height: 50vh; color: var(--muted);
-  background: var(--surface); border: 1px solid var(--line); border-left: 0; border-radius: 0 10px 10px 0;
-  box-shadow: var(--shadow); opacity: .3; transition: opacity 140ms ease-out, color 140ms ease-out; }
+  display: grid; place-items: center; width: 33.6px; height: 60vh; color: var(--muted);
+  background: var(--surface); border: 1px solid #c1bab2; border-left: 0; border-radius: 0 10px 10px 0;
+  box-shadow: var(--shadow); opacity: .5; transition: opacity 140ms ease-out, color 140ms ease-out; }
 .back:hover, .back:focus-visible { opacity: 1; color: var(--accent); border-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .back { transition: none; } }
 
@@ -167,6 +167,76 @@ svg.icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-w
 .row.end { justify-content: flex-end; }
 .row.between { justify-content: space-between; }
 .stack > * + * { margin-top: 12px; }
+
+/* Desktop volume workspace: workflow and chapters share a column beside the cast. */
+.main:has(.volume-layout) { max-width:1740px; }
+.volume-layout { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px 20px; align-items:start; }
+.volume-main { grid-column:1; grid-row:1; min-width:0; }
+.volume-chapters { grid-column:1; grid-row:2; min-width:0; }
+.volume-side { grid-column:2; grid-row:1 / span 2; position:sticky; top:20px; max-height:calc(100dvh - 40px); overflow:auto; min-width:0; }
+.volume-side > .card { padding:16px; }
+.volume-side .cast-heading { flex-wrap:nowrap; align-items:center; gap:8px; margin-bottom:10px; }
+.volume-side .cast-heading h2 { font-size:1rem; }
+.volume-side .cast-list { grid-template-columns:minmax(0,1fr); }
+.volume-side .cast-voice { overflow-wrap:anywhere; }
+.volume-side summary { cursor:pointer; }
+.workflow-overview { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:16px; }
+.chapter-table-wrap { overflow-x:auto; }
+.volume-chapters > .card { margin-top:0 !important; }
+.volume-chapters > .banner { margin-top:0 !important; margin-bottom:16px; }
+.volume-chapters table.chapters { table-layout:fixed; min-width:580px; }
+.volume-chapters table.chapters th:nth-child(1) { width:56px; }
+.volume-chapters table.chapters th:nth-child(2) { width:42px; }
+.volume-chapters table.chapters th:nth-child(4) { width:94px; }
+.volume-chapters table.chapters th:nth-child(5) { width:164px; }
+.volume-chapters table.chapters th:nth-child(6) { width:110px; }
+.volume-chapters table.chapters th, .volume-chapters table.chapters td { padding-left:7px; padding-right:7px; }
+.volume-chapters table.chapters th { letter-spacing:.02em; }
+.volume-chapters table.chapters td { padding-top:8px; padding-bottom:8px; }
+.volume-chapters .chapter-title { overflow-wrap:anywhere; }
+.volume-chapters .chip { max-width:100%; white-space:normal; }
+@media (max-width:1400px) { .volume-layout { grid-template-columns:minmax(0,1fr) 240px; gap:16px; } }
+@media (max-width:1220px) {
+  .volume-layout { grid-template-columns:minmax(0,1fr); }
+  .volume-main, .volume-side, .volume-chapters { grid-column:1; grid-row:auto; }
+  .volume-side { position:static; max-height:none; }
+}
+
+/* Narrator disclosures are closed initially; both editing cards share the same top edge. */
+.main:has(.narrator-layout) { max-width:1520px; }
+.narrator-layout { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:start; margin-top:16px; }
+.narrator-layout > .card { min-width:0; margin:0; }
+.narrator-layout .field, .narrator-layout .two-cols > * { min-width:0; }
+.narrator-layout .seg { display:flex; flex-wrap:wrap; }
+.narrator-layout .seg button { flex:1; }
+.narrator-fold > summary { cursor:pointer; }
+.narrator-fold > summary > b, .narrator-fold > summary > h3 { display:inline-flex; align-items:center; gap:8px; vertical-align:middle; }
+.narrator-fold > summary > .small { margin-left:14px; }
+.narrator-fold-body { margin-top:16px; }
+.narrator-variation { padding-bottom:14px; border-bottom:1px solid var(--line); }
+.narrator-variation small { display:block; margin-top:6px; color:var(--muted); }
+@media (max-width:1100px) { .narrator-layout { grid-template-columns:minmax(0,1fr); } }
+
+/* Optional notices sit beside video files; the details open below the shared toolbar. */
+.chapter-notices { position:relative; margin:10px 0 12px; gap:6px; }
+.chapter-notice > summary { list-style:none; cursor:pointer; min-width:34px; min-height:34px; padding:7px 10px; gap:6px; justify-content:center; }
+.chapter-notice > summary::-webkit-details-marker { display:none; }
+.chapter-notice.warning > summary { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--line)); }
+.chapter-notice.warning > summary, .btn.status-warn { color:var(--warn); background:var(--warn-soft); }
+.chapter-notice.complete > summary, .btn.status-ok { color:var(--ok); background:var(--ok-soft); border-color:color-mix(in srgb,var(--ok) 40%,var(--line)); }
+.review-character-list { display:grid; gap:8px; margin-top:12px; }
+.workflow-state { margin-left:auto; font-size:.75rem; font-weight:normal; }
+.workflow-trigger .workflow-chevron { margin-left:0; }
+.chapter-notice.report > summary { border-radius:50%; padding:10px; }
+.chapter-notice[open] > summary { background:var(--accent-soft); border-color:var(--accent); }
+.notice-count { font-size:.85rem; font-variant-numeric:tabular-nums; }
+.chapter-notice-panel { position:absolute; top:calc(100% + 8px); left:0; z-index:35; width:min(620px,100%); max-height:min(380px,55vh); overflow:auto; padding:16px; background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); }
+.chapter-notice-panel h3 { font-size:1rem; }
+.chapter-notice-panel p { margin:12px 0 0; }
+.chapter-notice-panel #save-manual { margin-top:12px; }
+.chapter-notice-panel [data-review-go] { margin:12px 10px 0 0; }
+.chapter-notice-panel a { display:inline-block; margin-top:10px; }
+.chapter-notice-panel .log { margin-top:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
 hr.soft { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
 
 /* ---- buttons ---- */
@@ -397,6 +467,21 @@ table.chapters input[type=checkbox] { width: 20px; height: 20px; margin: 0; acce
 .cast-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 6px 14px; }
 .cast-entry { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cast-entry .cast-voice { flex: 1; min-width: 0; min-height: 44px; padding: 8px 10px; gap: 3px; }
+.cast-summary { display:flex; width:100%; min-height:36px; padding:8px 10px; list-style:none; text-align:left; font-size:.86rem; }
+.cast-summary::-webkit-details-marker { display:none; }
+.cast-summary::after { content:'⌄'; margin-left:2px; flex-shrink:0; }
+details[open] > .cast-summary::after { content:'⌃'; }
+.cast-summary > span:first-child { min-width:0; overflow-wrap:anywhere; }
+.cast-status { margin-left:auto; flex-shrink:0; font-size:.75rem; }
+/* In the narrow side panel the count and the status wrap onto two lines instead of printing over each other. */
+.volume-side .cast-summary { flex-wrap:wrap; align-items:center; gap:2px 8px; }
+.volume-side .cast-summary > span:first-child { flex:1 1 auto; }
+.volume-side .cast-status { flex-shrink:1; min-width:0; margin-left:0; overflow-wrap:anywhere; }
+.volume-side .cast-summary::after { margin-left:auto; }
+.cast-category { margin-top:6px; }
+.cast-category > .cast-list { margin-top:6px; gap:4px; }
+.volume-side .cast-entry .cast-voice { min-height:40px; padding:7px 9px; font-size:.86rem; }
+.volume-side .cast-entry .cast-voice .small { font-size:.75rem; }
 .cast-unused { margin-top: 16px; color: var(--muted); }
 .grid.cards { align-items: start; }
 .grid.cards > .char-card { margin-top: 0; min-width: 0; }

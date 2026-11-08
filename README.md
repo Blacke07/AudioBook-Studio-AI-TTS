@@ -105,6 +105,20 @@ Place the four requested GGUF files directly in `models`, and the pinned Gemma b
 
 The ordered **Text → Audio → Video** workflow checks the selected batch before advancing. Completed passages can be reused after an interruption; only passages whose sound changes need new synthesis.
 
+**Review speakers** asks Gemma for a separate second pass over unassigned and context-inferred lines, using narration and dialogue before and after them. It keeps established assignments and manual splits, does not create identities or voices, and never generates audio. Progress and result counts appear in the activity log and chapter report. Uncertain results still need your review; **Analyze Text** remains the full reanalysis action.
+
+In a chapter, **Unassigned** opens only lines without an assigned speaker and takes you to the first one. **Lines to review** uses that same strict filter; **Dialogue only** shows all dialogue. Emotion proposals, contextual assignments and pacing warnings have separate controls with direct links to their lines. Characters needing approval have **Review** and **Go to line** buttons. Green means that control has no pending items, yellow means attention is needed, and stages that have not started stay neutral. The taller Back control remains visible while scrolling.
+
+Manual editing, unassigned speakers and character approvals use compact controls with explanations closed initially. The volume's side Cast panel uses the same status colors for categories and characters, checking both identity approval and the selected reading voice's fixed reference. Using a fixed narrator/shared voice is supported without requiring an own reference for that character.
+
+Audio freshness follows the effective reading plan. In single-voice mode, or when unresolved dialogue is intentionally read by the narrator, saved character names do not incorrectly mark freshly generated audio outdated.
+
+Single-voice playback keeps the analyzed script's row indices, including split speech tags. Older audio made with different segmentation must be regenerated before line highlighting and per-line playback are available; the whole saved audio file remains playable. Unchanged passages are reused.
+
+**Analyze Text** identifies characters with Gemma in either voice mode. Turning off separate character voices changes only the audio: character identities, contextual names and video labels are preserved while Narrator reads every line. Manual speaker editing remains available without Gemma. Previously generated narrator-only audio may need one cached reassembly to refresh its character metadata before creating video.
+
+On **Narrator**, the fixed-reference and ready-made voice sections start collapsed. The audition panel contains Seed, Performance variation and two editable text presets: **Prose** and **Dialogue**. Switching presets keeps their separate drafts while you remain on the page. The Dialogue sample includes speech tags for auditioning a narrator reading a conversation.
+
 ## Characters and reading voices
 
 **Quick view** provides search, volume and status filters, category assignment, volume membership, reading-voice selection and quick details. Changes remain a draft until you preview and apply them. **Voice studio** contains the detailed reference, audition and voice-creation tools.
@@ -127,7 +141,9 @@ New speakers discovered during analysis are provisional and recorded with the vo
 
 Identity renaming and video labels are separate. Changing only a video label preserves reusable audio and makes affected videos outdated. Merge keeps the target character's reference, refuses conflicting chapter policies, and retains old reference WAVs on disk.
 
-The volume **Cast and reading voices** section folds by category, with unused characters kept separately. Open a character there, a chapter legend entry, or a line's **Voice** control to edit its reading rule. Preview the affected chapters before applying. Existing voice-rule Undo is protected against overwriting later edits.
+The volume **Cast and reading voices** panel sits beside the chapter workspace and folds by category, with unused characters kept separately. The main **Run automatically** button stays in the workflow card. Open a character in the cast or a line's **Voice** control to edit its reading rule. Clicking a chapter speaker label or legend entry opens **Character and voice**, with categorized selection, name tags and previewed replacements for one line, one chapter or all analyzed chapters. Existing voice-rule Undo is protected against overwriting later edits.
+
+Chapter emotion notices and **Analysis report** open from compact icons beside the video-file actions. Blocking errors and missing-speaker/character-approval messages remain visible. After assigning an unassigned line, **Go to next** offers to move to the next one.
 
 ### Edit the spoken version
 
@@ -185,7 +201,7 @@ There is one rolling release, **current**, with stable filenames. Its assets are
 
 ## Testing and limitations
 
-This is a personal project, tested on one Windows computer with an RTX 4080 Laptop, 12 GB. The current checks passed **330 Python tests** (233 application and 97 distribution tests) and **48 Node tests**, plus targeted browser checks, public-content auditing and package integrity verification.
+This is a personal project, tested on one Windows computer with an RTX 4080 Laptop, 12 GB. The latest scoped checks passed **352 application Python tests**, **33 installer/public-release Python tests** and **136 Node interface tests**, plus targeted browser checks, public-content auditing and package integrity verification. The new selective speaker pass was checked with simulated model responses; its real Gemma accuracy has not been measured.
 
 Those checks do not guarantee operation on every computer. Physical RTX 20/30/50 hardware, Compact on an 8 GB card, clean-Windows installation, and the missing-WebView2 installation path remain unverified. Native desktop lifecycle tests use a fake backend for several interruption scenarios.
 

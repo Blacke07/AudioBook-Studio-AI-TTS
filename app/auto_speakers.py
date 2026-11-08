@@ -12,10 +12,14 @@ from dialogue import INNER_VOICE, NARRATOR, PAUSE, PRONOUNS, UNASSIGNED, prepare
 
 URL = "http://127.0.0.1:11434"
 MODEL = model_profile.CURRENT["gemma"]
-BATCH = 12
+BATCH = 8
 REPAIR_BATCH = 3
-CONTEXT_CHARS = 6000
-MAX_CONTEXT_CHARS = 12000
+CONTEXT_CHARS = 4000
+MAX_CONTEXT_CHARS = 8000
+NUM_CTX = 8192
+NUM_PREDICT = 2048
+CHARS_PER_TOKEN = 3.6  # measured 3.6-3.7 on this manuscript
+REPLY_TOKENS_PER_ROW = 100  # measured about 97 with speaker, voice and emotion
 SCHEMA = {
     "type": "object", "properties": {
         "assignments": {"type": "array", "items": {
@@ -44,10 +48,19 @@ Return exactly one assignment for each requested dialogue row id, in order. Neve
 canonical name, never an alias. Use a name from the glossary or one written in the story; do not invent names.
 Unnamed figures may be named by their description exactly as the story calls them (e.g. "the conductor").
 Context rows already carry a speaker when the author or a speech tag established it; use them to follow the turn
-order. Resolve explicit speech tags first, then action beats, addressees and pronouns. Hints on dialogue rows:
+order.
+How this manuscript marks speech. A line starts with a dash or sits in quotation marks. Lines almost never carry an
+inline tag ("he said"). The speaker is shown by the narration paragraph right before the line, set apart by a
+blank line: it gives that character's own action, reaction or feeling, usually how they take the previous line,
+and its subject is normally the one who speaks next. Between two different speakers there is usually such a
+paragraph. Two lines with no narration between them are a quick exchange or an interruption: the speaker changes.
+A character who is only looked at, spoken to, handed something or named as the listener is not the speaker.
+Every line belongs to a person; spoken words are never narration.
+Resolve in this order: an explicit speech tag, the subject of the narration paragraph right before the line, then
+addressees, pronouns, and who would say these words to whom. Hints on dialogue rows:
 - `tag`: pronoun of the row's own speech tag; "she" excludes male characters and "he" excludes female ones.
 - `action_by`: the only character named in the last sentence of the narration directly before this row.
-  By convention (action beat) that character is the speaker unless the line clearly answers them.
+  That character is the speaker unless the line clearly answers them or they are named only as the listener.
 - `unnamed`: the narration just before introduces an unidentified voice or person. Return speaker=null,
   basis=unclear, unless the context later names who it is.
 - `new_exchange`: a blank line precedes the row.
@@ -56,13 +69,14 @@ order. Resolve explicit speech tags first, then action beats, addressees and pro
 Rows of kind `thought` (speaker "Inner voice") are thoughts: text between backticks or angle brackets. They are
 never speech: never assign one to a character, never ask for its speaker, and a thought is no evidence of who
 speaks the next line. A text in backticks is never a dialogue row.
-Each dash or quotation line is a new turn. In a two-person exchange untagged lines usually alternate between the
-two people talking, but check the content: one character may say two consecutive lines, and a third may interrupt.
-Narration between two lines that only shows what one character feels or perceives (a taste of blood, a pain) does
-not make that character the speaker of the next line; ask who would say these words, and to whom.
+Each dash or quotation line is a new turn. In a two-person exchange lines usually alternate, but check the
+content: one character may say two lines in a row (a narration paragraph about the same person between them), and
+a third may interrupt. If the narration describes only a bodily sensation (a taste of blood, a pain) and not a
+reaction to the conversation, ask who would say these words, and to whom.
 If the identity is not established, use speaker=null, basis=unclear. Do not assign Narrator to dialogue.
 Gender: use the glossary, or explicit pronouns/descriptions in the story; otherwise unknown.
-Use basis=explicit for a named speech attribution, context for a supported contextual inference, unclear otherwise.
+Use basis=explicit for a named speech attribution or for a narration paragraph before the line whose only acting
+character is the speaker, context for a supported inference, unclear otherwise.
 Give a brief reason (at most twelve words). For a new speaker you may suggest a category ID from categories.
 Category order is author priority, never evidence of who speaks. Never prefer a major character over textual evidence.
 A speaker who is not in `characters` is a new speaker, and it never gets a voice of its own. Always return its
@@ -73,11 +87,11 @@ voice only gives the new speaker a voice; it is never the speaker, so never answ
 different people, but they are never proof by themselves. An alias applies only in the volume and context the author
 scoped it to; never carry a scoped alias into another context or invent an identity because the current volume is not listed.
 For each id in `delivery_ids` (when given) also return a `delivery`: how the line is spoken, one of the schema's
-emotions, neutral unless the text shows otherwise. Judge from the line's own words, its speech tag and the narration
-around it; a tag such as "she whispered" or "he snapped" decides. In this manuscript punctuation follows the speech:
-a final "." is dry or controlled (dry, calm); "!" is shouted or aggressive (shouting, angry); "?" is a real question
-(usually neutral); "…" is a sigh, a hesitation or a fading voice (weary, hesitant); a line broken off with "—" is
-interrupted (hesitant, or neutral). A delivery never changes who speaks and is never evidence of the speaker.
+emotions, neutral unless the text shows otherwise. Judge from the line's own words and the narration around it.
+Punctuation follows the speech: a final "." is dry or controlled (dry, calm); "!" is shouted or aggressive
+(shouting, angry); "?" is a real question (usually neutral); "…" is a sigh, a hesitation or a fading voice (weary,
+hesitant); a line broken off with "—" is interrupted (hesitant, or neutral). A delivery never changes who speaks
+and is never evidence of the speaker.
 The output must match the supplied JSON schema."""
 
 
@@ -301,22 +315,31 @@ def release_model():
 
 
 def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, batch_size=BATCH,
-              proposals=None, volume=None, chapter=None, source_hash=None, deliveries=None):
+              proposals=None, volume=None, chapter=None, source_hash=None, deliveries=None,
+              review_rows=None, review_ids=None):
     """Split the text, take named speech tags literally, ask Gemma only for the rest, propose voices for new
     characters. Existing glossary voices are never changed. Returns script rows, source, glossary, report.
     With a `deliveries` dict, Gemma also proposes an emotion for every dialogue line, {row: key}, in the same
-    pass (tagged lines too, so every batch then holds dialogue rather than only unassigned lines)."""
+    pass (tagged lines too, so every batch then holds dialogue rather than only unassigned lines).
+    `review_rows` and `review_ids` instead recheck saved uncertain rows without resegmenting the text;
+    other saved assignments remain context and the target guesses are withheld."""
     if not text.strip():
         raise ValueError("Enter or import text first.")
     if batch_size not in (BATCH, REPAIR_BATCH):
         raise ValueError("Unsupported analysis batch size.")
     entries = glossary.normalize(glossary_rows)
     genders = {row[0]: glossary.GENDERS[row[2]] for row in entries}
-    segments = segment(text)
+    reviewing = review_rows is not None
+    if reviewing and (not isinstance(review_ids, list) or not review_ids
+                      or any(type(i) is not int or not 0 <= i < len(review_rows) for i in review_ids)
+                      or review_ids != sorted(set(review_ids))):
+        raise ValueError('Choose valid saved lines for speaker review.')
+    segments = None if reviewing else segment(text)
+    rows = deepcopy(review_rows) if reviewing else None
     scenes, scene = [], 0
-    for item in segments:
+    for item in rows if reviewing else segments:
         scenes.append(scene)
-        if item.kind == "pause":
+        if (item[0] == PAUSE if reviewing else item.kind == "pause"):
             scene += 1
     from character_registry import alias_resolver, contexts_for, document, organization
     registry_data = document()
@@ -329,15 +352,19 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
         base_aliases = glossary.alias_map(entries)
         resolve = lambda number: base_aliases
         scene_contexts = {}
-    rows = prepare_script(text, aliases=resolve)
-    tagged = sum(1 for row, item in zip(rows, segments) if item.kind == "dialogue" and row[0] != UNASSIGNED)
+    if reviewing:
+        for index in review_ids:
+            rows[index][0] = UNASSIGNED  # An uncertain guess must not become its own context evidence.
+    else:
+        rows = prepare_script(text, aliases=resolve)
+    tagged = 0 if reviewing else sum(1 for row, item in zip(rows, segments) if item.kind == "dialogue" and row[0] != UNASSIGNED)
     inner = sum(1 for row in rows if row[0] == INNER_VOICE)
     hints = {}
-    for index, item in enumerate(segments):
+    for index, item in enumerate(segments or []):
         subject = tag_subject(segments, index).lower() if item.kind == "dialogue" else ""
         if subject in PRONOUNS:
             hints[index] = subject
-    ids = [i for i, row in enumerate(rows) if row[0] == UNASSIGNED]
+    ids = review_ids if reviewing else [i for i, row in enumerate(rows) if row[0] == UNASSIGNED]
     unassigned = set(ids)
     if deliveries is not None:
         ids = [i for i, row in enumerate(rows) if row[0] not in (NARRATOR, PAUSE)]
@@ -365,20 +392,24 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
     shared_names = {row[0] for row in library}
     shared_voices = [{"name": row[0], "description": row[3]} for row in library]
     try:
-        for batch_number, batch_ids in enumerate(batches):
+        pending, batch_number, total = list(batches), -1, len(batches)
+        while pending:
+            batch_ids = pending.pop(0)
+            batch_number += 1
             target_ids = [i for i in batch_ids if i in unassigned]
             delivery_ids = batch_ids if deliveries is not None else []
             task = "Identifying speakers and emotions" if delivery_ids else "Identifying speakers"
-            progress(batch_number / len(batches), desc=f"{task} · batch {batch_number + 1}/{len(batches)}")
+            progress(min(batch_number / total, 0.99), desc=f"{task} · batch {batch_number + 1}/{total}")
             context = context_window(rows, batch_ids)
             beats = {}
             for record in context:
                 index = record["id"]
-                if record["kind"] == "dialogue" and segments[index].after_blank:
+                if not reviewing and record["kind"] == "dialogue" and segments[index].after_blank:
                     record["new_exchange"] = True
                 if index in target_ids:
-                    record.update(beat_hints(segments, index, resolve(scenes[index])))
-                    if index >= 2 and segments[index].joined and segments[index - 1].kind == "tag" \
+                    if not reviewing:
+                        record.update(beat_hints(segments, index, resolve(scenes[index])))
+                    if not reviewing and index >= 2 and segments[index].joined and segments[index - 1].kind == "tag" \
                             and segments[index - 2].kind == "dialogue":
                         record["continues"] = index - 2
                     if "action_by" in record:
@@ -406,13 +437,35 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                 content["narrative_contexts"] = [{"name": name, "description": context_notes.get(name, "")}
                                                  for name in active]
             schema = assignment_schema(target_ids, delivery_ids)
+            messages = [{"role": "system", "content": SYSTEM + (
+                '\nThis is a second pass over saved assignments. Recheck only requested_ids using the '
+                'narration and dialogue both before and after each target. Target speakers are withheld '
+                'because they were uncertain. Other saved speakers are context, never targets to rewrite. '
+                'Do not force an answer when context is insufficient.' if reviewing else '')
+                + "\nSchema: " + json.dumps(schema)},
+                        {"role": "user", "content": json.dumps(content, ensure_ascii=False)}]
+            # The window holds the prompt and the reply together. When they cannot both fit, halve the batch
+            # instead of letting the model run out of context in the middle of its JSON.
+            estimate = sum(len(m["content"]) for m in messages) / CHARS_PER_TOKEN \
+                + REPLY_TOKENS_PER_ROW * max(len(batch_ids), 1)
+            if estimate > NUM_CTX - 300 and len(batch_ids) > 1:
+                half = (len(batch_ids) + 1) // 2
+                pending[:0] = [batch_ids[:half], batch_ids[half:]]
+                total += 1
+                batch_number -= 1
+                continue
             response = request("/api/chat", {
                 "model": MODEL, "stream": False, "think": False, "keep_alive": "2m",
                 "format": schema,
-                "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 2048},
-                "messages": [{"role": "system", "content": SYSTEM + "\nSchema: " + json.dumps(schema)},
-                             {"role": "user", "content": json.dumps(content, ensure_ascii=False)}],
+                "options": {"temperature": 0, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT},
+                "messages": messages,
             }, timeout=600)
+            if response.get("done_reason") == "length" and len(batch_ids) > 1:
+                half = (len(batch_ids) + 1) // 2
+                pending[:0] = [batch_ids[:half], batch_ids[half:]]
+                total += 1
+                batch_number -= 1
+                continue
             try:
                 if response.get("done_reason") == "length":
                     raise AnalysisError("The AI response reached its output limit.", "truncated", target_ids)
@@ -425,7 +478,7 @@ def attribute(text, glossary_rows, narrator_mode_name, progress, release=True, b
                                              alias_maps={row_id: resolve(scenes[row_id]) for row_id in target_ids},
                                              scoped_aliases=scoped_aliases, shared_voices=shared_names)
             except AnalysisError as error:
-                error.diagnostic.update(model=MODEL, batch=batch_number + 1, batches=len(batches),
+                error.diagnostic.update(model=MODEL, batch=batch_number + 1, batches=total,
                                         batch_size=batch_size, done_reason=response.get("done_reason"))
                 raise
             assignments.extend(batch)

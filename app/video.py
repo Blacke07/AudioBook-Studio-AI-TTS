@@ -122,7 +122,7 @@ class Timeline:
         passages = meta['passages']
         if not passages or not math.isfinite(duration) or duration <= 0:
             raise ValueError('The chapter has no valid audio timing.')
-        spoken = {passage['line'] for passage in passages}
+        spoken = {row for passage in passages for row in (passage['line'], *passage.get('joined_rows', []))}
         omitted = {index: row for index, row in enumerate(rows)
                    if index not in spoken and row[0] == NARRATOR and SIMPLE_TAG_RE.fullmatch(str(row[1]))}
         self.entries = []

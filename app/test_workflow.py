@@ -225,6 +225,20 @@ class WorkflowTests(unittest.TestCase):
         analyze.assert_called_once()
         render.assert_not_called()
 
+    def test_single_voice_analysis_still_uses_gemma_and_releases_its_model(self):
+        chapter = Mock(stem='001')
+        chapter.script.return_value={'rows':[['Narrator','An invented sentence.',False,0]]}
+        worker=self.worker()
+        with patch.object(project,'chapters',return_value=[chapter]), \
+                patch.object(project,'load_settings',return_value={'multi_voice':False,'video':{'enabled':False}}), \
+                patch.object(glossary,'load',return_value=[]), \
+                patch.object(pipeline,'analyze',return_value=([],'',[])) as analyze, \
+                patch('worker.release_model') as release, patch('worker.render_chapter') as render:
+            worker._run({'volume':'Demo','stems':['001'],'steps':['analyze'],'force':True})
+        self.assertTrue(analyze.call_args.args[1])
+        release.assert_called_once()
+        render.assert_not_called()
+
     def test_generation_error_can_be_resumed_but_missing_text_analysis_cannot(self):
         self.assertTrue(pipeline.readiness("error", {"text_ready":True})["can_generate"])
         self.assertFalse(pipeline.readiness("analyzed", {"text_ready":False})["can_generate"])

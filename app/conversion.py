@@ -15,12 +15,14 @@ import fixed_voices
 import glossary
 import project
 import voice_check
-from dialogue import (HEADING_RE, NARRATOR, PAUSE, SCENE_PAUSE, UNASSIGNED, WITHIN_PASSAGE_PAUSE, Voice,
+from dialogue import (HEADING_RE, NARRATOR, PAUSE, SCENE_PAUSE, TAG_START_RE, UNASSIGNED, WITHIN_PASSAGE_PAUSE, Voice,
                       boundary_pause, drop_simple_tags, read_cast, read_script)
 from engine_client import synthesize
 from project import split_passages
-from voices import (BASE_CLONE, CLONE_TIMBRE, MODEL_FILES, MODEL_NAMES, STANDARD_MODEL_FILES, describe,
+from voices import (BASE_CLONE, CLONE_TIMBRE, MODEL_FILES, MODEL_NAMES, STANDARD_MODEL_FILES, VOX_CLONE, describe,
                     voice_parameters)
+# Engines that clone an approved take: the voice keeps one identity and is checked against that take.
+FIXED_MODES = (BASE_CLONE, VOX_CLONE)
 
 # One GPU user at a time: Qwen passages, previews and Gemma analysis all take this lock.
 LOCK = Lock()
@@ -54,6 +56,15 @@ def speakable(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def spelled_out(lines, settings):
+    """With "Spell out numbers" on, numbers, money, times and titles are written in words before they are read.
+    The source and the script keep the digits; an edit made in Spoken text replaces this later and so still wins."""
+    if not settings.get("spell_out"):
+        return lines
+    from text_normalize import normalize
+    return [line if line.role == PAUSE else replace(line, text=normalize(line.text)) for line in lines]
+
+
 def decode_audio(data):
     audio, rate = sf.read(io.BytesIO(data), dtype="float32")
     if rate != RATE or audio.ndim != 1 or not audio.size or not np.isfinite(audio).all():
@@ -85,8 +96,9 @@ def suspicious(text, seconds):
 def narrator_voice(settings):
     narrator = settings["narrator"]
     fixed = fixed_voices.get(NARRATOR)
-    if fixed:  # the approved take, cloned by Base: one identity for the whole book
-        return Voice(fixed["id"], "", "", int(narrator["seed"]), BASE_CLONE)
+    if fixed:  # the approved take, cloned by Base (or VoxCPM2, with delivery): one identity for the whole book
+        mode = VOX_CLONE if narrator.get("engine") == "voxcpm" else BASE_CLONE
+        return Voice(fixed["id"], "", "", int(narrator["seed"]), mode)
     return narrator_recipe(settings)
 
 
@@ -120,11 +132,23 @@ class Chunk:
     variant: int = 0
     voice_role: str = ""
     emotion: str = ""
+    joined_rows: tuple[int, ...] = ()
 
 
-def plan_chunks(lines, voices, dialogue_pause):
+def plan_chunks(lines, voices, dialogue_pause, *, join_narrated_tags=False):
+    planned = []
+    for line in lines:
+        if join_narrated_tags and planned and line.role == NARRATOR and line.joined and TAG_START_RE.fullmatch(line.text):
+            before, joined_rows = planned[-1]
+            if (before.role not in (NARRATOR, PAUSE) and not joined_rows and before.variant == line.variant
+                    and (before.emotion or emotions.NEUTRAL) == (line.emotion or emotions.NEUTRAL)):
+                combined = f"{before.text} {line.text}"
+                if len(split_passages(combined)) == 1:
+                    planned[-1] = (replace(before, text=combined), (line.row,))
+                    continue
+        planned.append((line, ()))
     chunks = []
-    for index, line in enumerate(lines):
+    for index, (line, joined_rows) in enumerate(planned):
         if line.role == PAUSE:
             continue
         if (line.voice_role or line.role) not in voices:
@@ -133,12 +157,12 @@ def plan_chunks(lines, voices, dialogue_pause):
         for part, (passage, _) in enumerate(passages):
             if part < len(passages) - 1:
                 pause = WITHIN_PASSAGE_PAUSE
-            elif index + 1 < len(lines):
-                pause = boundary_pause(line, lines[index + 1], dialogue_pause)
+            elif index + 1 < len(planned):
+                pause = boundary_pause(line, planned[index + 1][0], dialogue_pause)
             else:
                 pause = 0.0
             chunks.append(Chunk(line.role, passage, pause, line.row if line.row >= 0 else index, line.variant,
-                                line.voice_role, line.emotion))
+                                line.voice_role, line.emotion, joined_rows))
     return chunks
 
 
@@ -154,10 +178,13 @@ def generation_order(chunks, voices):
 def delivered(chunk, voice):
     """The voice as it reads this chunk, and whether the chunk's emotion is heard. A recipe voice adds the
     emotion's instruction to its delivery; a fixed voice clones the role's approved take for that emotion, or
-    its neutral take when there is none (Base takes no instructions)."""
+    its neutral take when there is none (Base takes no instructions). VoxCPM2 keeps the neutral take's timbre
+    and hears the emotion as a style hint."""
     emotion = chunk.emotion or emotions.NEUTRAL
     if emotion == emotions.NEUTRAL:
         return voice, False
+    if voice.mode == VOX_CLONE:
+        return replace(voice, instructions=emotions.style(emotion)), True
     if voice.mode == BASE_CLONE:
         take = fixed_voices.take(chunk.voice_role or chunk.role, emotion)
         return (replace(voice, speaker=take["id"]), True) if take else (voice, False)
@@ -182,7 +209,7 @@ def passage_key(chunk, voice, temperature):
         data.append({"emotion": chunk.emotion})
     if voice.mode == BASE_CLONE:
         data.append(CLONE_TIMBRE)
-    if MODEL_FILES[voice.mode] != STANDARD_MODEL_FILES[voice.mode]:
+    if voice.mode in MODEL_FILES and MODEL_FILES[voice.mode] != STANDARD_MODEL_FILES[voice.mode]:
         data.append(MODEL_FILES[voice.mode])  # another model file sounds different; Standard keys stay as they were
     return hashlib.sha1(json.dumps(data, ensure_ascii=False).encode("utf-8")).hexdigest()[:20]
 
@@ -222,7 +249,7 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
         from character_registry import check_category_references
         check_category_references(lines, registry_document)
         from spoken_text import apply_lines
-        lines = apply_lines(lines, script)
+        lines = apply_lines(spelled_out(lines, settings), script)
         import delivery
         lines = delivery.apply_lines(lines, script)
         if settings.get("speech_tags", "omit_fixed") == "omit_fixed":
@@ -233,18 +260,24 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
         voices = read_cast(rows_glossary, MODEL_NAMES[settings["narrator"]["mode"]], narrator, speakers)
     else:
         script = script_override if script_override is not None else chapter.script()
-        if script and script.get('spoken_text'):
+        if script:
             if script['source_hash'] != project.text_hash(text):
-                raise NotReady('The source changed after spoken-text editing. Prepare the chapter again.')
+                raise NotReady('The source changed after analysis. Prepare the chapter again.')
             from spoken_text import apply_lines
+            # Keep the saved script's row anchors even when every row is read by Narrator.
+            # Resegmenting the source here used to shift playback after split speech tags.
             rows = [[PAUSE if row[0] == PAUSE else NARRATOR, *row[1:]] for row in script['rows']]
-            lines = apply_lines(read_script(text, True, rows, text), script)
+            lines = apply_lines(spelled_out(read_script(text, True, rows, text), settings), script)
             import delivery
             lines = delivery.apply_lines(lines, script)
+            lines = [replace(line, voice_role=NARRATOR) for line in lines]
         else:
             lines = read_script(text, False, None, "")
         voices = {NARRATOR: narrator}
-    chunks = plan_chunks(lines, voices, settings["dialogue_pause"])
+    if script:
+        # Narrator-only reading and unresolved-speaker fallback change the voice, not the identity.
+        lines = [replace(line, role=script['rows'][line.row][0]) for line in lines]
+    chunks = plan_chunks(lines, voices, settings["dialogue_pause"], join_narrated_tags=not settings["multi_voice"])
     if settings["announce_titles"]:
         chunks.insert(0, Chunk(NARRATOR, project.announcement(chapter.stem), SCENE_PAUSE))
     keys = [passage_key(chunk, voices[chunk.voice_role or chunk.role],
@@ -253,6 +286,9 @@ def chapter_plan(chapter, settings, glossary_rows=None, text=None, *, routing_ru
 
 
 VOICE_RETRIES = 2  # extra takes for a passage whose voice drifted towards another character
+PACE_RETRIES = 2   # extra takes for a passage spoken far too fast or too slow (a skipped phrase, a long hesitation)
+LEVEL_RANGE = (0.7, 1.4)  # a passage is brought towards the chapter's usual level by at most this factor (about 3 dB)
+FADE = 0.006       # seconds of fade at the edges of an assembled passage: no clicks between clips
 
 
 def fixed_references(voices):
@@ -261,31 +297,34 @@ def fixed_references(voices):
         return {}
     references = {}
     for name, voice in voices.items():
-        entry = fixed_voices.get(name) if voice.mode == BASE_CLONE else None
+        entry = fixed_voices.get(name) if voice.mode in FIXED_MODES else None
         if entry:
             references[name] = fixed_voices.FOLDER / entry["file"]
     return references
 
 
-def render_checked(chunk, voice, temperature, key, references):
+def render_checked(chunk, voice, temperature, key, references, retry_pace=True):
     """Generate one passage. For a fixed voice, its fingerprint is compared with the approved take and with
     the other fixed voices of the chapter; a take closer to someone else is redone with another variant,
     keeping the best one. Writes the passage WAV and a .qc.json with the verdict."""
     target = passage_file(key)
     attempts = []
-    for attempt in range(1 + (VOICE_RETRIES if (chunk.voice_role or chunk.role) in references else 0)):
+    checked = (chunk.voice_role or chunk.role) in references
+    for attempt in range(1 + max(VOICE_RETRIES if checked else 0, PACE_RETRIES if retry_pace else 0)):
         with LOCK:
             audio = generate(chunk.text, voice, temperature, chunk.variant + 1000 * attempt)
         temporary = target.with_name(f"{key}.try{attempt}.wav")
         sf.write(temporary, audio, RATE, subtype="PCM_16")
         verdict = None
-        if (chunk.voice_role or chunk.role) in references and audio.size / RATE >= voice_check.MIN_SECONDS:
+        if checked and audio.size / RATE >= voice_check.MIN_SECONDS:
             others = {name: path for name, path in references.items() if name != (chunk.voice_role or chunk.role)}
             verdict = voice_check.judge(temporary, references[chunk.voice_role or chunk.role], others)
-        attempts.append((verdict["margin"] if verdict else 1.0, attempt, temporary, verdict))
-        if verdict is None or verdict["margin"] >= voice_check.MIN_MARGIN:
+        margin = verdict["margin"] if verdict else 1.0
+        pace_ok = not (retry_pace and suspicious(speakable(chunk.text), audio.size / RATE))
+        attempts.append(((pace_ok, margin), attempt, temporary, verdict))
+        if pace_ok and (verdict is None or margin >= voice_check.MIN_MARGIN):
             break
-    margin, best, chosen, verdict = max(attempts, key=lambda item: item[0])
+    (_, margin), best, chosen, verdict = max(attempts, key=lambda item: item[0])
     chosen.replace(target)
     for _, _, path, _ in attempts:
         path.unlink(missing_ok=True)
@@ -293,6 +332,39 @@ def render_checked(chunk, voice, temperature, key, references):
         project.write_json(target.with_suffix(".qc.json"), {
             **verdict, "attempts": len(attempts), "chosen": best,
             "drifting": margin < voice_check.MIN_MARGIN})
+
+
+def voiced_level(audio, rate=RATE):
+    """RMS of the speaking part of a clip (quiet frames ignored), or 0 for silence."""
+    frame = int(rate * 0.02)
+    if audio.size < frame * 2:
+        return 0.0
+    energy = np.sqrt(np.mean(audio[:audio.size // frame * frame].reshape(-1, frame) ** 2, axis=1))
+    voiced = energy[energy > energy.max() * 0.1]
+    return float(np.sqrt(np.mean(voiced ** 2))) if voiced.size else 0.0
+
+
+def level_gains(levels):
+    """One gain per passage: outliers move towards the chapter's median level, never by more than LEVEL_RANGE."""
+    speaking = [level for level in levels if level > 1e-4]
+    if not speaking:
+        return [1.0] * len(levels)
+    middle = float(np.median(speaking))
+    low, high = LEVEL_RANGE
+    return [min(max(middle / level, low), high) if level > 1e-4 else 1.0 for level in levels]
+
+
+def smoothed(audio, gain, rate=RATE):
+    """The passage at its gain (never past full scale) with a few milliseconds of fade at both edges."""
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    audio = audio * (min(gain, 0.98 / peak) if peak > 0 else 1.0)
+    fade = min(int(rate * FADE), audio.size // 2)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        audio = audio.copy()
+        audio[:fade] *= ramp
+        audio[-fade:] *= ramp[::-1]
+    return audio.astype(np.float32, copy=False)
 
 
 def render_chapter(chapter, settings, progress=lambda done, total, message: None, should_stop=lambda: False):
@@ -314,16 +386,19 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
         if heard and voice.mode == BASE_CLONE and role in references:
             # an emotion take is checked against itself: a whisper is not a drift from the neutral take
             checked = {**references, role: fixed_voices.FOLDER / fixed_voices.take(role, chunk.emotion)["file"]}
-        render_checked(chunk, voice, temperature_for(settings, role), keys[index], checked)
+        render_checked(chunk, voice, temperature_for(settings, role), keys[index], checked,
+                       *(() if settings.get("retry_pace", True) else (False,)))
     progress(len(chunks), len(chunks), "Assembling the chapter")
     chapter.work.mkdir(parents=True, exist_ok=True)
     temporary = chapter.audio_file.with_suffix(".tmp.wav")
     seconds = 0.0
     passages = []
     checks = {"checked": 0, "redone": 0, "drifting": 0}
+    clips = [sf.read(passage_file(key), dtype="float32")[0] for key in keys]
+    gains = level_gains([voiced_level(clip) for clip in clips]) if settings.get("level_passages", True) else [1.0] * len(clips)
     with sf.SoundFile(temporary, mode="w", samplerate=RATE, channels=1, subtype="PCM_16") as output:
-        for chunk, key in zip(chunks, keys):
-            audio, _ = sf.read(passage_file(key), dtype="float32")
+        for chunk, key, clip, gain in zip(chunks, keys, clips, gains):
+            audio = smoothed(clip, gain) if settings.get("level_passages", True) else clip
             length = audio.size / RATE
             check = project._read_json(passage_file(key).with_suffix(".qc.json"), {})
             if check:
@@ -334,6 +409,7 @@ def render_chapter(chapter, settings, progress=lambda done, total, message: None
                 flagged.add(chunk.line)
             passages.append({"role": chunk.role, "text": chunk.text, "line": chunk.line, "key": key,
                              "voice_role": chunk.voice_role or chunk.role, "start": round(seconds, 3), "seconds": round(length, 3),
+                             **({"joined_rows": list(chunk.joined_rows)} if chunk.joined_rows else {}),
                              **({"emotion": chunk.emotion} if chunk.emotion else {})})
             output.write(audio)
             seconds += length

@@ -1,6 +1,6 @@
 /* Identity, reading voice and name tags are available at the point of reviewing a chapter. */
 const ChapterCast = {
-  async editor(source, volume, stem, data, row = null) {
+  async editor(source, volume, stem, data, row = null, refresh = route) {
     const state = await api('/api/character-registry');
     const known = state.document.characters.some(c=>c.name===source);
     const scope = Number.isInteger(row) ? 'line' : 'chapter';
@@ -33,7 +33,7 @@ const ChapterCast = {
       [{label:'Cancel',value:false},{label:'Apply character replacement',value:true,primary:true}]);
     if(!accepted)return;
     await api('/api/character-registry/reassign',{method:'PUT',body:{request:report.request,plan_id:report.plan_id}});
-    toast('Character assignments saved.');await route();
+    toast('Character assignments saved.');await refresh();
   },
   async link(source,state) {
     const targets=state.document.characters.filter(c=>c.name!==source);

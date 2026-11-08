@@ -76,3 +76,20 @@ test('dropdown height is limited by the remaining window space and resize closes
   listeners.resize();
   assert.equal(root.panel.hidden,true);
 });
+
+test('workflow uses green for completed stages, yellow for attention, neutral before starting',()=>{
+  const render=(chapters,chosen=[])=>{
+    const sandbox={selected:new Set(chosen),esc:String,icon:()=>'',window:{addEventListener(){}},document:{addEventListener(){}}};
+    vm.runInNewContext(source+'\nthis.workflow=ChapterWorkflow;',sandbox);
+    return sandbox.workflow.html(chapters,'Demo');
+  };
+  const ready={stem:'1',state:'exported',can_generate:true,can_export:true,video:{state:'ready'}};
+  const classes=html=>[...html.matchAll(/class="btn workflow-trigger ([^"]*)"/g)].map(m=>m[1]);
+  assert.deepEqual(classes(render([ready])),['status-ok','status-ok','status-ok']);
+  assert.deepEqual(classes(render([{stem:'1',state:'new',video:{state:'none'}}])),['','','']);
+  assert.deepEqual(classes(render([{...ready,unclear:1,state:'outdated',video:{state:'outdated'}}])),['status-warn','status-warn','status-warn']);
+  const pending={...ready,stem:'2',speaker_review_count:2};
+  assert.equal(classes(render([ready,pending]))[0],'status-warn');
+  assert.equal(classes(render([ready,pending],['1']))[0],'status-ok');
+  assert.equal(classes(render([{...ready,state:'modified',can_generate:false}]))[0],'status-warn');
+});

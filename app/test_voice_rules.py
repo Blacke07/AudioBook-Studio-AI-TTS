@@ -66,6 +66,17 @@ class VoiceRuleTests(unittest.TestCase):
         self.assertEqual(self.chapter.script()['rows'],self.script['rows'])
         self.assertEqual(self.chapter.text(),self.text)
 
+    def test_cast_reports_fixed_effective_voice_without_modifying_character_or_script(self):
+        self.apply(self.request(target='Narrator'))
+        before=(glossary.GLOSSARY_FILE.read_bytes(),self.chapter.script_file.read_bytes())
+        with patch.object(fixed_voices,'get',side_effect=lambda name: {'id':name} if name=='Narrator' else None):
+            people={entry['name']:entry for entry in rules.cast('Lantern')['characters']}
+        self.assertFalse(people['Ada']['fixed'])
+        self.assertTrue(people['Ada']['reading_fixed'])
+        self.assertEqual(people['Ada']['read_as'],'Narrator')
+        self.assertFalse(people['Morgan']['reading_fixed'])
+        self.assertEqual(before,(glossary.GLOSSARY_FILE.read_bytes(),self.chapter.script_file.read_bytes()))
+
     def test_references_do_not_chain_or_create_cycles(self):
         self.apply(self.request(target='Morgan'))
         self.apply({'scope':'everywhere','speaker':'Morgan','read_as':'Ada'})

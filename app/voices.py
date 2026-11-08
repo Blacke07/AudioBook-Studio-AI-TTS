@@ -6,6 +6,9 @@ CUSTOM_VOICE = "CustomVoice — built-in Qwen speakers"
 # Base clones an approved take (reference audio + its text) for every passage: the only mode in which a
 # voice keeps the same identity across passages. It takes no delivery instructions.
 BASE_CLONE = "Base — fixed reference voice"
+# VoxCPM2 clones the timbre of the same approved take and, unlike Base, follows a short style hint per passage
+# (the emotion of the line). An optional engine for the narrator, installed apart from the Qwen models.
+VOX_CLONE = "VoxCPM2 — fixed reference voice with delivery"
 # Acoustic detail sampling temperature used when cloning a fixed reference.
 CLONE_TIMBRE = 0.6
 _PROFILE_KEYS = {VOICE_DESIGN: "voice_design", CUSTOM_VOICE: "custom_voice", BASE_CLONE: "base"}
@@ -186,8 +189,12 @@ def custom_speaker(name):
 
 
 def voice_parameters(mode, speaker, description, delivery):
-    if mode not in MODEL_FILES:
+    if mode not in MODEL_FILES and mode != VOX_CLONE:
         raise ValueError("Choose one of the available models.")
+    if mode == VOX_CLONE:  # the delivery is the style hint of the line, empty when neutral
+        if not str(speaker).startswith("fix-"):
+            raise ValueError("VoxCPM2 reads with the narrator's fixed voice. Fix a narrator voice first.")
+        return speaker, delivery.strip()
     if mode == BASE_CLONE:
         if not str(speaker).startswith("fix-"):
             raise ValueError("The fixed voice is missing. Approve and fix another reference.")

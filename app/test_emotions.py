@@ -41,7 +41,8 @@ class EmotionTests(unittest.TestCase):
 
     def test_vocabulary_is_the_confirmed_list_with_instructions_and_audition_lines(self):
         self.assertEqual(emotions.KEYS, ('neutral', 'calm', 'dry', 'angry', 'shouting', 'weary', 'hesitant',
-                                         'whispered', 'afraid', 'tender', 'amused'))
+                                         'whispered', 'afraid', 'tender', 'amused', 'tense', 'ominous', 'wonder',
+                                         'sorrowful', 'urgent'))
         self.assertEqual(emotions.instruction('neutral'), '')
         for key in emotions.KEYS[1:]:
             self.assertTrue(emotions.instruction(key), key)

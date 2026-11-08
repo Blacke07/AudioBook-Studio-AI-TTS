@@ -63,14 +63,24 @@ const VoiceRules = {
   castMarkup(data) {
     const sort = entries => [...entries].sort((a,b) => b.lines-a.lines || a.name.localeCompare(b.name));
     const changed = c => c.read_as !== c.name;
-    const row = c => `<button class="btn cast-voice" type="button" data-cast-voice="${esc(c.name)}"><b>${esc(c.label || c.name)}${changed(c) ? ' → '+esc(c.read_as) : ''}</b><span class="small muted">${c.lines} ${c.lines === 1 ? 'line' : 'lines'} · ${c.chapters} ${c.chapters === 1 ? 'chapter' : 'chapters'}${c.status && c.status!=='approved'?' · '+esc(c.status):''}</span></button>${c.fixed || c.read_as !== c.name ? '' : fieldHelp('Voice to review','No own reference voice is fixed for this character. Review the reading rule: using the narrator may be intentional. Audition a reference if this character should use its own voice.','Review')}`;
+    const pending = c => c.status !== 'approved' || !c.reading_fixed;
+    const row = c => {
+      const state=c.lines ? pending(c)?'warn':'ok' : '';
+      const status=c.status!=='approved'?'Approval needed':!c.reading_fixed?'Voice to review':'Ready';
+      return `<button class="btn cast-voice ${state?`status-${state}`:''}" type="button" data-cast-voice="${esc(c.name)}" title="${esc(status)} · Edit reading voice"><b>${esc(c.label || c.name)}${changed(c) ? ' → '+esc(c.read_as) : ''}</b><span class="small">${c.lines} ${c.lines === 1 ? 'line' : 'lines'} · ${c.chapters} ${c.chapters === 1 ? 'chapter' : 'chapters'}${c.lines?` · ${status}`:''}</span></button>${c.reading_fixed ? '' : fieldHelp('Voice to review','The selected reading voice has no fixed reference. Choose an approved reference or use a fixed narrator/shared voice. Existing voices are not changed by opening this menu.','Review')}`;
+    };
     const group = (title,entries) => entries.length ? `<section class="cast-group"><h3>${title} (${entries.length})</h3><div class="cast-list">${sort(entries).map(c=>`<div class="cast-entry">${row(c)}</div>`).join('')}</div></section>` : '';
     const used = data.characters.filter(c=>c.lines>0), unused=data.characters.filter(c=>!c.lines);
     const count=data.characters.filter(changed).length;
-    return `<div class="row between cast-heading"><h2>Cast and reading voices</h2><button class="btn small" id="undo-voice-rule" ${data.can_undo ? '' : 'disabled'}>Undo last voice change</button></div>
-      <details id="cast-disclosure"><summary>${count} changed · ${data.characters.length-count} unchanged — Show cast</summary>
-      <p class="small muted">Narrator → cast → analyze and review text → audio → video.</p>
-      ${(data.categories || [{id:'uncategorized',name:'Uncategorized'}]).map(cat=>{const people=used.filter(c=>(c.category||'uncategorized')===cat.id);return people.length?`<details data-cast-category="${esc(cat.id)}"><summary>${esc(cat.name)} · ${people.length} characters · ${people.filter(c=>c.status && c.status!=='approved').length} to review</summary><div class="cast-list">${sort(people).map(c=>`<div class="cast-entry">${row(c)}</div>`).join('')}</div></details>`:'';}).join('')}
+    const todo=used.filter(pending).length;
+    const state=used.length?todo?'warn':'ok':'';
+    return `<div class="row between cast-heading"><h2>Cast and reading voices</h2><button class="btn small icon-only" id="undo-voice-rule" aria-label="Undo last voice change" title="Undo last voice change" ${data.can_undo ? '' : 'disabled'}>${icon('redo')}</button></div>
+      <details id="cast-disclosure"><summary class="btn cast-summary ${state?`status-${state}`:''}"><span>${used.length} in this volume</span><span class="cast-status">${todo?`${todo} to review`:used.length?'Ready':'No analyzed cast'}</span></summary>
+      <p class="small muted">${count} changed · ${data.characters.length-count} unchanged reading voices.</p>
+      ${(data.categories || [{id:'uncategorized',name:'Uncategorized'}]).map(cat=>{
+        const people=used.filter(c=>(c.category||'uncategorized')===cat.id),todo=people.filter(pending).length;
+        return people.length?`<details class="cast-category" data-cast-category="${esc(cat.id)}"><summary class="btn cast-summary status-${todo?'warn':'ok'}"><span>${esc(cat.name)} <small>(${people.length})</small></span><span class="cast-status">${todo?`${todo} to review`:'Ready'}</span></summary><div class="cast-list">${sort(people).map(c=>`<div class="cast-entry">${row(c)}</div>`).join('')}</div></details>`:'';
+      }).join('')}
       ${unused.length ? `<details class="cast-unused"><summary>Not in this volume (${unused.length})</summary>${group('Changed',unused.filter(changed))}${group('Unchanged',unused.filter(c=>!changed(c)))}</details>` : ''}
       ${data.characters.length ? '' : '<p>Add characters or analyze text to discover the cast.</p>'}</details>`;
   },

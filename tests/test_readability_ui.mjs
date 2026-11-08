@@ -7,7 +7,7 @@ const app=read('app.js'),css=read('style.css');
 const esc=app.split('\n').find(line=>line.startsWith('const esc ='));
 const helper=app.slice(app.indexOf('let fieldHelpId ='),app.indexOf('function drawCharacters()'));
 function castMarkup(characters){
- const s={icon:()=>'',characters};
+ const s={icon:()=>'',characters:characters.map(c=>({status:'approved',reading_fixed:c.fixed,...c}))};
  vm.runInNewContext(esc+'\n'+helper+'\n'+read('voice-rules.js')+'\nhtml=VoiceRules.castMarkup({characters,can_undo:true});',s);
  return s.html;
 }
@@ -19,6 +19,20 @@ test('Cast groups changes first, hides absent cast, counts and sorts within grou
  assert.doesNotMatch(h,/Ada → Ada/);assert.match(h,/Max → Narrator/);
  assert.match(h,/<details id="cast-disclosure">/);assert.match(h,/id="undo-voice-rule"/);assert.match(h,/Help: Voice to review/);
 });
+test('Cast status checks the effective voice and approval, not whether the voice was changed',()=>{
+ const h=castMarkup([
+  {name:'Borrower',read_as:'Narrator',status:'approved',fixed:false,reading_fixed:true,lines:2,chapters:1},
+  {name:'Pending',read_as:'Pending',status:'needs_review',fixed:true,reading_fixed:true,lines:1,chapters:1},
+  {name:'Unfixed',read_as:'Unfixed',status:'approved',fixed:false,reading_fixed:false,lines:1,chapters:1},
+  {name:'Absent',read_as:'Absent',status:'needs_review',fixed:false,reading_fixed:false,lines:0,chapters:0}]);
+ assert.match(h,/3 in this volume/);assert.match(h,/cast-status">2 to review/);
+ assert.match(h,/cast-voice status-ok"[^>]*data-cast-voice="Borrower"/);
+ assert.match(h,/cast-voice status-warn"[^>]*data-cast-voice="Pending"/);
+ assert.match(h,/cast-voice status-warn"[^>]*data-cast-voice="Unfixed"/);
+ assert.match(h,/class="btn cast-summary status-warn"/);
+ assert.doesNotMatch(h,/<details[^>]*\sopen(?:\s|>)/);
+ const empty=castMarkup([]);assert.match(empty,/No analyzed cast/);assert.doesNotMatch(empty,/status-ok/);
+});
 test('Cast handles empty data and hostile names as text',()=>{
  assert.match(castMarkup([]),/Add characters or analyze/);
  assert.doesNotMatch(castMarkup([{name:'<img>',read_as:'<img>',lines:1,chapters:1,fixed:true}]),/<img>/);
@@ -29,7 +43,8 @@ test('optional Cast storage cannot block the disclosure',()=>{
 });
 test('Back has tall desktop target, rest opacity and reduced-motion support',()=>{
  const back=css.slice(css.indexOf('.back {'),css.indexOf('/* ---- surfaces'));
- assert.match(back,/left: 250px/);assert.match(back,/height: 50vh/);assert.match(back,/opacity: \.3/);
+ assert.match(back,/left: 250px/);assert.match(back,/height: 60vh/);assert.match(back,/width: 33\.6px/);assert.match(back,/opacity: \.5/);
+ assert.match(back,/border: 1px solid #c1bab2/);
  assert.match(back,/back:hover, \.back:focus-visible \{ opacity: 1/);assert.match(back,/prefers-reduced-motion/);
 });
 test('character template folds detection and creation, preserving all wired fields',()=>{

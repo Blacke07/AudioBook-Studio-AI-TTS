@@ -6,9 +6,24 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../app/web/app.js', import.meta.url), 'utf8');
 const style = readFileSync(new URL('../app/web/style.css', import.meta.url), 'utf8');
 const extract = name => source.match(new RegExp(`function ${name}[\\s\\S]*?\\n}\\n`))[0];
-const {nextToResolve, reviewQueue} = vm.runInNewContext(
-  `const UNASSIGNED = 'Unassigned';\n${extract('nextToResolve')}\n${extract('reviewQueue')}\n({nextToResolve, reviewQueue})`);
+const {nextToResolve, reviewQueue, matchesLineFilter, playbackLine} = vm.runInNewContext(
+  `const UNASSIGNED = 'Unassigned', NARRATOR = 'Narrator', PAUSE = 'Scene break';\n${extract('nextToResolve')}\n${extract('reviewQueue')}\n${extract('matchesLineFilter')}\n${extract('playbackLine')}\n({nextToResolve, reviewQueue, matchesLineFilter, playbackLine})`);
 const lines = speakers => speakers.map(speaker => ({speaker, text: speaker}));
+
+test('playback switches at exact speech-tag boundaries without holding the previous row',()=>{
+  const rows=[{start:0,seconds:1},{start:1,seconds:.4},{start:1.4,seconds:2}];
+  assert.equal(playbackLine(rows,.99),0);
+  assert.equal(playbackLine(rows,1),1);
+  assert.equal(playbackLine(rows,1.4),2);
+  assert.equal(playbackLine(rows,3.5),null);
+});
+
+test('playback keeps original indices when a tag is omitted and clears the highlight in a pause',()=>{
+  const rows=[{start:0,seconds:1},{},{start:1.2,seconds:2}];
+  assert.equal(playbackLine(rows,1.1),null);
+  assert.equal(playbackLine(rows,1.2),2);
+  assert.equal(playbackLine([],1),null);
+});
 
 test('the next unresolved line follows the one just resolved', () => {
   const all = lines(['Ada', 'Narrator', 'Unassigned', 'Ada', 'Unassigned']);
@@ -21,12 +36,12 @@ test('after the last open line it returns to the first one, and is null when non
   assert.equal(nextToResolve(lines(['Ada', 'Narrator', 'Morgan']), 1), null);
 });
 
-test('the review queue lists unassigned, context and pacing lines in reading order', () => {
+test('the review queue only lists unassigned lines in reading order', () => {
   const rows = [{speaker: 'Ada', text: 'a'}, {speaker: 'Unassigned', text: 'b'},
     {speaker: 'Ada', text: 'c', basis: 'context'}, {speaker: 'Narrator', text: 'd', flagged: true},
     {speaker: 'Morgan', text: 'e', basis: 'explicit'}];
   assert.deepEqual(reviewQueue(rows).map(item => [item.index, item.why]),
-    [[1, 'Unassigned'], [2, 'Context'], [3, 'Pacing']]);
+    [[1, 'Unassigned']]);
   assert.deepEqual(reviewQueue(rows.slice(0, 1)), []);
 });
 
@@ -62,10 +77,39 @@ test('the chapter table has audio, video and listen buttons and chips that expla
   assert.match(style, /\.chip\.has-reason \{ cursor:help; \}/);
 });
 
-test('Gemma emotion proposals join the review queue; a speaker problem on the same line is named first', () => {
+test('emotion proposals do not enter the unassigned review queue', () => {
   const rows = [{speaker: 'Ada', text: 'a', emotion_source: 'ai'}, {speaker: 'Unassigned', text: 'b', emotion_source: 'ai'},
     {speaker: 'Ada', text: 'c', emotion_source: 'manual'}];
-  assert.deepEqual(reviewQueue(rows).map(item => [item.index, item.why]), [[0, 'Emotion'], [1, 'Unassigned']]);
+  assert.deepEqual(reviewQueue(rows).map(item => [item.index, item.why]), [[1, 'Unassigned']]);
+});
+
+test('Lines to review excludes assigned dialogue, narration, emotions, context and pacing warnings', () => {
+  const rows = [{speaker:'Unassigned',text:'Who?'}, {speaker:'Ada',basis:'context'},
+    {speaker:'Ada',emotion_source:'ai'}, {speaker:'Narrator',flagged:true}, {speaker:'Scene break'}];
+  assert.deepEqual(rows.filter(line=>matchesLineFilter(line,'review')).map(line=>line.text),['Who?']);
+  assert.equal(rows.filter(line=>matchesLineFilter(line,'dialogue')).length,3);
+  assert.equal(rows.filter(line=>matchesLineFilter(line,'all')).length,5);
+});
+
+test('Unassigned shortcut selects only that filter and focuses the first unresolved line',()=>{
+  const button={},calls=[];
+  const code=source.slice(source.indexOf("  $$('[data-unassigned]')"),source.indexOf("  $$('[data-review-go]')"));
+  const sandbox={$$:()=>[button],lines:[{speaker:'Ada'},{speaker:'Unassigned'},{speaker:'Ada',emotion_source:'ai'}],
+    nextToResolve,volume:'Demo',stem:'001',viewChapter:(...args)=>calls.push(args)};
+  vm.runInNewContext("let lineFilter='all';\n"+code,sandbox);button.onclick();
+  assert.equal(vm.runInNewContext('lineFilter',sandbox),'review');assert.equal(calls[0][2].focus,1);
+  sandbox.lines=[{speaker:'Ada'}];button.onclick();assert.equal(calls.length,1);
+});
+
+test('context and emotion shortcuts reveal all text and go directly to the matching line',()=>{
+  const code=source.slice(source.indexOf("  $$('[data-review-go]')"),source.indexOf('  $$("[data-queue-go]")'));
+  for (const [kind,index] of [['context',1],['proposed',2],['missing',3],['pacing',4]]) {
+    const button={dataset:{reviewGo:kind}},calls=[];
+    const sandbox={$$:()=>[button],lines:[{speaker:'Unassigned'},{basis:'context'},{emotion_source:'ai'},{emotion_missing:'angry'},{flagged:true}],
+      volume:'Demo',stem:'001',viewChapter:(...args)=>calls.push(args)};
+    vm.runInNewContext("let lineFilter='review';\n"+code,sandbox);button.onclick();
+    assert.equal(vm.runInNewContext('lineFilter',sandbox),'all');assert.equal(calls[0][2].focus,index);
+  }
 });
 
 test('each line has an emotion menu that saves the author choice and explains a missing take', () => {
@@ -73,7 +117,7 @@ test('each line has an emotion menu that saves the author choice and explains a 
   assert.match(source, /api\("\/api\/chapter\/delivery", \{ method: "PUT", body: \{ volume, stem, row: index, emotion, source_hash: data\.source_hash \} \}\)/);
   assert.match(source, /data-emotion-keep="\$\{index\}"/);
   assert.match(source, /line\.emotion_missing \? `<span class="chip warn"/);
-  assert.match(source, /Some emotions use the neutral take\./);
+  assert.match(readFileSync(new URL('../app/web/chapter-notices.js', import.meta.url), 'utf8'), /Some emotions use the neutral take\./);
   assert.match(style, /\.emotion-pick\.quiet \{ opacity:\.45;/);
   assert.match(style, /prefers-reduced-motion: reduce\) \{ \.emotion-pick\.quiet \{ transition:none; \} \}/);
 });

@@ -13,7 +13,7 @@ import fixed_voices
 import glossary
 import pipeline
 import project
-from dialogue import INNER_VOICE, NARRATOR, UNASSIGNED, prepare_script
+from dialogue import INNER_VOICE, NARRATOR, PAUSE, UNASSIGNED, prepare_script
 from voices import BASE_CLONE
 
 CHAPTER = "— I —\n\nMorgan stopped on the step.\n— To Northport, Morgan said.\n— Yes.\n\n<She breathes first.>\n\n❦\n\n`Thought.` He left."
@@ -102,12 +102,44 @@ class ProjectTests(unittest.TestCase):
             conversion.render_chapter(self.chapter(1), self.settings | {"multi_voice": False})
             volume, count, _ = export.export_volume("Book", self.settings)
             self.assertEqual((volume.suffix, count), (".m4b", 2))
+            import subprocess
+            subprocess.run([export.ffmpeg(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=600x900:d=1",
+                            "-frames:v", "1", str(self.source / "cover.jpg")], check=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            volume, count, _ = export.export_volume("Book", self.settings)  # the cover of the chapter folder is attached
+            report = subprocess.run([export.ffmpeg(), "-hide_banner", "-i", str(volume)], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", creationflags=subprocess.CREATE_NO_WINDOW).stderr
+            self.assertIn("attached pic", report)
+            self.assertIn("Chapters:", report)  # the chapter marks survive the picture
 
     def test_unclear_lines_can_be_left_to_the_narrator(self):
         chapter = self.chapter()
         pipeline.analyze(chapter, False, self.settings)
         relaxed = self.settings | {"unclear_policy": "narrator"}
         self.assertEqual(pipeline.status(chapter, relaxed, glossary.load())[0], "analyzed")
+
+    def test_single_voice_render_stays_current_with_character_assignments_in_the_script(self):
+        chapter = self.chapter()
+        pipeline.analyze(chapter, False, self.settings)
+        self.assertTrue(any(row[0] not in (NARRATOR, PAUSE) for row in chapter.script()['rows']))
+        single = self.settings | {'multi_voice': False}
+        conversion.render_chapter(chapter, single)
+        state, details = pipeline.status(chapter, single, glossary.load())
+        self.assertEqual(state, 'generated')
+        self.assertTrue(pipeline.readiness(state, details)['can_export'])
+
+    def test_narrator_fallback_render_stays_current_with_unassigned_lines(self):
+        chapter = self.chapter()
+        pipeline.analyze(chapter, False, self.settings)
+        relaxed = self.settings | {'unclear_policy': 'narrator'}
+        self.assertTrue(any(row[0] == UNASSIGNED for row in chapter.script()['rows']))
+        meta = conversion.render_chapter(chapter, relaxed)
+        state, details = pipeline.status(chapter, relaxed, glossary.load())
+        self.assertEqual(state, 'generated')
+        self.assertTrue(pipeline.readiness(state, details)['can_export'])
+        self.assertTrue(any(p['role']==UNASSIGNED and p['voice_role']==NARRATOR for p in meta['passages']))
+        import video
+        video.load_chapter(chapter.work)
 
     def test_changed_source_text_is_detected(self):
         chapter = self.chapter()

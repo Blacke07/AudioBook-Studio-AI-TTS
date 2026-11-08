@@ -25,20 +25,36 @@ const ChapterWorkflow = (() => {
     const textBlocked = targets.filter(c => !c.can_generate);
     const audioBlocked = targets.filter(c => !c.can_export);
     const errors = targets.filter(c => c.error);
-    const review = targets.filter(c => c.unclear || c.state === "needs_review");
+    const review = targets.filter(c => c.speaker_review_count > 0);
+    const stageState = (key) => {
+      if (!targets.length) return ['', 'No chapters'];
+      if (key === 'text') {
+        if (targets.some(c => c.unclear || c.speaker_review_count || c.reason || c.analysis_problem || ['needs_review','modified','error'].includes(c.state))) return ['warn', 'Needs review'];
+        return targets.every(c => c.can_generate) ? ['ok', 'Ready'] : ['', 'Not finished'];
+      }
+      if (key === 'audio') {
+        if (targets.some(c => ['outdated','partial','error'].includes(c.state))) return ['warn', 'Needs attention'];
+        return targets.every(c => c.can_export) ? ['ok', 'Ready'] : ['', 'Not generated'];
+      }
+      if (targets.some(c => c.video.state === 'outdated' || c.video.error)) return ['warn', 'Needs attention'];
+      return targets.every(c => c.video.state === 'ready') ? ['ok', 'Ready'] : ['', 'Not created'];
+    };
     const blocked = (items, instruction) => items.length
       ? `${instruction} (${items.length} ${items.length === 1 ? "chapter" : "chapters"}). ` + items.slice(0, 3).map(c =>
         `<a href="#/chapter/${encodeURIComponent(volume)}/${encodeURIComponent(c.stem)}">${esc(c.title)}</a>`).join(", ") + (items.length > 3 ? "…" : "")
       : "";
     const disabled = (items, instruction) => !targets.length || items.length ? `disabled title="${esc(instruction)}"` : "";
     const action = (id, label, symbol, explanation, attrs = "") => `<div class="workflow-action"><button class="btn" id="${id}" ${attrs}>${icon(symbol)} ${label}</button><p class="workflow-explanation">${explanation}</p></div>`;
-    const category = (key, number, label, symbol, actions, reason = "") => `<div class="workflow-category" data-workflow="${key}"><button type="button" class="btn workflow-trigger" aria-expanded="false" aria-controls="workflow-${key}"><span class="workflow-number">${number}</span>${icon(symbol)} ${label}<span class="workflow-chevron" aria-hidden="true">⌄</span></button><div class="workflow-dropdown" id="workflow-${key}" hidden>${actions}${reason ? `<p class="workflow-explanation workflow-blocker">${reason}</p>` : ""}</div></div>`;
+    const category = (key, number, label, symbol, actions, reason = "") => {
+      const [state, caption] = stageState(key);
+      return `<div class="workflow-category" data-workflow="${key}"><button type="button" class="btn workflow-trigger ${state ? `status-${state}` : ''}" aria-expanded="false" aria-controls="workflow-${key}"><span class="workflow-number">${number}</span>${icon(symbol)} ${label}<small class="workflow-state">${caption}</small><span class="workflow-chevron" aria-hidden="true">⌄</span></button><div class="workflow-dropdown" id="workflow-${key}" hidden>${actions}${reason ? `<p class="workflow-explanation workflow-blocker">${reason}</p>` : ""}</div></div>`;
+    };
     const fallback = targets.some(c => c.narrator_fallback)
       ? `<p class="workflow-hint">Your Reading policy explicitly allows the narrator to read unassigned dialogue. Choose “Wait for my review” in Settings to require speaker assignments first.</p>` : "";
     return `<div class="workflow-categories" aria-label="Ordered chapter workflow">` +
       category("text", 1, "Text", "book",
         action("run-analyze", "Analyze Text", "wand", "Analyze or reanalyze this batch to identify speakers. Confirmation is required before replacing existing assignments.") +
-        action("review-text", "Review speakers", "flag", "Open the chapters that still need speaker assignments.", review.length ? "" : "disabled") +
+        action("review-text", "Review speakers", "flag", "Ask Gemma to recheck unassigned and context-inferred speakers using the surrounding passages. Established assignments and voices are kept.", review.length ? "" : 'disabled title="No uncertain speaker assignments in this batch. Analyze Text first, or approve identities in Characters."') +
         action("diagnose-text", "Diagnose / repair", "info", "Explain errors and choose a repair. No voices or text are changed silently.", errors.length ? "" : "disabled")) +
       category("audio", 2, "Audio", "sound",
         action("run-render", "Generate audio", "play", "Use the approved speaker assignments and voices for this batch.", disabled(textBlocked, "Finish text analysis and speaker review for every chapter in this batch.")) +
@@ -97,5 +113,15 @@ const ChapterWorkflow = (() => {
     if (stem) await diagnose(volume, stem);
   }
 
-  return {html, bind, diagnose, diagnoseBatch, isOpen: () => Boolean(active)};
+  async function reviewSpeakers(volume, chapters) {
+    const targets = chapters.filter(c => c.speaker_review_count > 0);
+    const count = targets.reduce((sum,c) => sum + c.speaker_review_count,0);
+    if (!count) { toast('No uncertain speaker assignments to recheck. Character approval is handled in Characters.'); return; }
+    if (!await modal('Review speakers with Gemma?', `<p>Recheck <b>${count}</b> uncertain ${count===1?'line':'lines'} in <b>${targets.length}</b> ${targets.length===1?'chapter':'chapters'}, using the narration and dialogue before and after each passage.</p><p>Only Unassigned and context-inferred speakers can change. Established assignments, text, takes, emotions and fixed voices are kept. No audio is generated. New identities still need your decision.</p><p class="small muted">Gemma can still be unsure. Review remaining lines afterwards; changed speakers may make audio/video outdated.</p>`,
+      [{label:'Cancel',value:false},{label:'Review speakers',value:true,primary:true}])) return;
+    await api('/api/run',{method:'POST',body:{volume,stems:targets.map(c=>c.stem),steps:['review']}});
+    close(); toast('Speaker review queued. Follow Gemma progress and the result counts in the lower-left log.');pollNow();
+  }
+
+  return {html, bind, diagnose, diagnoseBatch, reviewSpeakers, isOpen: () => Boolean(active)};
 })();

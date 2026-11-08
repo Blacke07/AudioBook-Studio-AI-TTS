@@ -49,8 +49,49 @@ EMOTIONS = {
                "instruction": "Say this line with quiet amusement, a smile audible in the voice, lightly teasing.",
                "sample": "You fell into the fountain? Fully dressed, in front of the whole town? Oh, I would have "
                          "paid good money to see that, truly."},
+    # Moods of narration. A voice that follows a style hint (VoxCPM2) reads them directly; a Qwen recipe voice
+    # gets the instruction; a fixed Qwen voice needs a take, like for any other emotion.
+    "tense": {"label": "Tense",
+              "instruction": "Say this line with held-back tension: low, controlled, slightly slower, every word placed carefully.",
+              "sample": "He stopped at the gate. The latch was cold, and somewhere behind the hedge a branch "
+                        "cracked. He did not turn around. He knew he was no longer alone."},
+    "ominous": {"label": "Ominous",
+                "instruction": "Say this line ominously: low and slow, with quiet menace and a long, heavy pause before the last words.",
+                "sample": "The lamps along the road went out one by one, as if something were walking toward the "
+                          "town and putting out each light it passed, without hurry and without a sound."},
+    "wonder": {"label": "Wonder",
+               "instruction": "Say this line with quiet wonder: open and slightly breathless, as if seeing it for the first time.",
+               "sample": "The ceiling opened onto the sky. Thousands of pale lights hung in the dark above the "
+                         "water, and for a long moment he forgot to breathe at all."},
+    "sorrowful": {"label": "Sorrowful",
+                  "instruction": "Say this line sorrowfully: soft and slow, heavy with grief, the voice nearly breaking at the end.",
+                  "sample": "She held the small coat against her chest for a long time. It still smelled of rain "
+                            "and woodsmoke and bread, and for a moment she let herself believe he would walk in."},
+    "urgent": {"label": "Urgent",
+               "instruction": "Say this line urgently: quick and driving, short breaths, rising pace without shouting.",
+               "sample": "He ran. The bridge shook under his boots, the rope burned his palms, and behind him "
+                         "the planks fell away into the river one after another, faster than he could climb."},
 }
 KEYS = tuple(EMOTIONS)
+# The same deliveries as short style hints for VoxCPM2, which keeps the fixed take's timbre and follows the hint.
+STYLES = {
+    NEUTRAL: "",
+    "calm": "calm, unhurried, gentle",
+    "dry": "dry, understated, flat irony",
+    "angry": "controlled anger, tight and clipped, not shouting",
+    "shouting": "shouting, loud, forceful and urgent",
+    "weary": "weary, tired, sighing, fading endings",
+    "hesitant": "hesitant, with small pauses, searching for words",
+    "whispered": "whispering, soft, breathy and close",
+    "afraid": "afraid, tense and unsteady, quick breath",
+    "tender": "tender, warm and soft, intimate",
+    "amused": "quietly amused, smiling, lightly teasing",
+    "tense": "tense, low and held back, slower",
+    "ominous": "ominous, low and slow, quiet menace",
+    "wonder": "full of quiet wonder, open and slightly breathless",
+    "sorrowful": "sorrowful and tender, soft, voice almost breaking",
+    "urgent": "urgent, quick and driving, rising pace",
+}
 
 
 def check(key):
@@ -65,6 +106,10 @@ def label(key):
 
 def instruction(key):
     return EMOTIONS[key]["instruction"]
+
+
+def style(key):
+    return STYLES[key]
 
 
 def choices():

@@ -67,6 +67,29 @@ test('reading-voice shortcut forwards current chapter and line choices without i
   assert.equal(ui.calls.length,1);
 });
 
+test('a successful character assignment resumes the caller review flow; cancellation does not',async()=>{
+  for(const accepted of [true,false]){
+    const ui=castUI([{target:'Morgan',scope:'line'},accepted]);let resumed=0;
+    await ui.cast.editor('Unassigned','Lantern','001',ui.data,0,async()=>{resumed++;});
+    assert.equal(resumed,accepted?1:0);assert.equal(ui.routes(),0);
+  }
+});
+
+test('the normal chapter character editor restores next-line review after assigning an unresolved speaker',async()=>{
+  const source=read('app.js'),start=source.indexOf('  $$("[data-who]").forEach('),end=source.indexOf('  const goTo =',start);
+  for(const speaker of ['Unassigned','Ada']){
+    const button={dataset:{who:'0'}},data={manual_draft:false},lines=[{speaker}],opened=[],refreshed=[];
+    vm.runInNewContext(source.slice(start,end),{
+      $$:()=>[button],data,lines,volume:'Lantern',stem:'001',UNASSIGNED:'Unassigned',
+      guard:action=>action(),ChapterCast:{editor:async(...args)=>{opened.push(args.slice(0,5));await args[5]();}},
+      viewChapter:async(...args)=>refreshed.push(args),
+    });
+    await button.onclick({stopPropagation(){}});
+    assert.equal(opened[0][0],speaker);assert.equal(opened[0][4],0);
+    assert.deepEqual(JSON.parse(JSON.stringify(refreshed)),[['Lantern','001',speaker==='Unassigned'?{prompt:0}:{focus:0}]]);
+  }
+});
+
 test('tag scope describes exact included and excluded chapter boundaries',()=>{
   const tags=feature('character-tags.js','CharacterTags');
   const state={volumes:[{id:'v',name:'Lantern'}],document:{organization:{contexts:[{id:'c',chapter_range:{from:'002',before:'010'}}]}}};

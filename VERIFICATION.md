@@ -14,6 +14,39 @@ See [NVIDIA's compute capability list](https://developer.nvidia.com/cuda/gpus) f
 
 ## Checks performed
 
+- Desktop interface and audio-state update (2026-11-03): 352 application Python tests, 24 installer tests,
+  9 public-release tests and 136 Node interface tests passed. Targeted browser checks used
+  invented projects at desktop window widths, including the side cast, table selection,
+  narrator disclosures, draft-preserving Prose/Dialogue presets and compact chapter notices.
+- Review navigation: Unassigned and Lines to review contain only unassigned speakers. Browser
+  checks at 1366×900 and 1280×800 confirmed direct line focus, separate emotion/context shortcuts,
+  chapter-local character approval access, an empty green review state, and no document overflow.
+  Pending controls are yellow; completed controls are green; unstarted workflow stages stay neutral.
+  Back is 33.6 pixels wide, 60vh tall, with 50% resting opacity and a light-gray border.
+- Compact review controls: manual recovery, unassigned speakers and identity approval are
+  closed disclosures on one toolbar. Navigation closes the disclosure without stealing focus.
+  Volume Cast categories/rows use approval plus the effective voice's fixed-reference status;
+  unused characters do not inflate this volume's review count. Tests include narrator routing
+  with no own reference, missing references, empty cast and read-only status inspection.
+- Audio freshness compares stored passage identities with the effective chapter plan, including
+  single-voice mode, narrator fallback and title announcements. Regression tests render invented
+  chapters with a simulated engine and verify current audio can be exported; changing an identity
+  with the same reading voice still requires reassembly and becomes current afterwards.
+- Playback alignment: single-voice plans preserve saved row indices across split speech tags.
+  Regression tests check generated API timestamps, multipart lines including internal pauses,
+  exact highlight boundaries and skipped/omitted rows. Outdated audio exposes no stale row timings;
+  tests verify reading its status preserves the old WAV and metadata bytes.
+- Identity/voice separation: Gemma analysis and provisional character registration also run in
+  narrator-only mode; manual preparation still skips AI. Generated metadata keeps the script's
+  speaker identity separately from the Narrator reading voice, including unresolved-speaker fallback.
+  Synthetic end-to-end tests load that audio into the video timeline/renderer and verify contextual
+  labels, narrator routing and cached reassembly without synthesis. Worker tests verify Gemma is
+  released after analysis in either voice mode. Real-model attribution quality remains unmeasured.
+- Selective speaker review: simulated responses verify surrounding context, saved splits,
+  preservation of established assignments and voice references, no automatic identity creation,
+  cancellation/failure without script replacement, and stale-data rejection. This is not a
+  measurement of real Gemma attribution accuracy. Review remains separate from audio generation.
+
 - Line auditions: synthetic tests cover reading overrides, spoken edits, emotional references, stale-selection rejection, explicit variant selection and reuse of the heard passage cache. Browser checks cover comparison, selection and closing without a change. Real-model listening quality and cold-start latency for this feature have not been measured.
 - Emotional-reference auditions: tests cover exact manual seeds (including zero), invalid-input rejection, saved-description precedence, seed reset and approval of the heard seed. These auditions do not condition on the neutral audio; keeping a seed or description does not guarantee the same perceived speaker.
 
@@ -242,7 +275,7 @@ Volume Edit relinks the source folder and retains the stable volume name. Remove
 
 ## Readability and separate spoken text (2026-10-22)
 
-Cast uses native collapsed disclosures, changed/unchanged groups, usage sorting and a nested unused group. Characters retains the existing field identities under folded detection and creation sections, with focusable, described help and Escape dismissal. Back occupies 50% of window height, with 30% resting opacity, full opacity on focus/hover and reduced-motion support.
+Cast uses native collapsed disclosures, changed/unchanged groups, usage sorting and a nested unused group. Characters retains the existing field identities under folded detection and creation sections, with focusable, described help and Escape dismissal. Back occupies 60% of window height, with 50% resting opacity, full opacity on focus/hover and reduced-motion support.
 
 Spoken edits are independent of source rows. Preview performs no writes; saving revalidates the script and uses the existing durable transaction journal. Restoring the original recovers the original passage keys. Splitting, re-analysis, speaker changes and manual re-preparation retain stale edits for review. Both multi-voice and single-voice rendering use saved spoken versions. No emotion classifier or automatic punctuation rewrite is claimed. The optional cleanup only adjusts punctuation spacing and duplicate !/? in dialogue after user review.
 

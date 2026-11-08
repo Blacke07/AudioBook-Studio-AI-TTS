@@ -10,6 +10,9 @@ NARRATOR = "Narrator"
 UNASSIGNED = "Unassigned"
 PAUSE = "Scene break"
 SEPARATORS = ("❦", "***", "* * *")
+# A line of its own, "[pause 2]" or "[pause: 1.5s]": a silence of that many seconds between two paragraphs.
+PAUSE_MARK_RE = re.compile(r"^\[pause(?:[\s:=]+(?P<seconds>\d+(?:\.\d+)?)\s*s?)?\]$", re.I)
+MAX_MARKED_PAUSE = 10.0
 SCRIPT_COLUMNS = ["Speaker", "Text", "Continues the paragraph"]
 DIALOGUE_RE = re.compile(r'^(?:[—–-]\s+|["“])')
 # Episode markers of the book: "— I —", "— Fire II —", "— Round I —". Read as headings, never as speech.
@@ -212,7 +215,7 @@ def segment(text, split_inline=True):
             flush()
             blank[0] = True
             continue
-        if line in SEPARATORS:
+        if is_pause_mark(line):
             flush()
             add([Segment("pause", line, False)], blank[0])
         elif HEADING_RE.match(line):
@@ -315,8 +318,8 @@ def read_script(text, multi, rows, prepared_source):
             raise ValueError(f"Enter a speaker and text on line {index}.")
         if role == UNASSIGNED:
             raise ValueError(f"Assign a character to the dialogue on line {index}.")
-        if role == PAUSE and content not in SEPARATORS:
-            raise ValueError(f"Line {index}: a scene break may only replace a decorative separator.")
+        if role == PAUSE and not is_pause_mark(content):
+            raise ValueError(f"Line {index}: a scene break may only replace a decorative separator or a [pause] mark.")
         joined = len(row) >= 3 and _joined(row[2]) and bool(result)
         dialogue = role != NARRATOR or (bool(DIALOGUE_RE.match(content)) and not HEADING_RE.match(content))
         variant = int(row[3] or 0) if len(row) == 4 else 0
@@ -406,7 +409,23 @@ NARRATION_PAUSE = 0.6
 SCENE_PAUSE = 1.2
 
 
+def is_pause_mark(text):
+    """A decorative separator or a [pause 2] mark: both are read as silence, never as speech."""
+    return text in SEPARATORS or PAUSE_MARK_RE.match(text) is not None
+
+
+def marked_pause(text):
+    """Seconds named by a [pause 2] mark (a bare [pause] is a scene break); None for any other text."""
+    match = PAUSE_MARK_RE.match(text)
+    if not match:
+        return None
+    seconds = match.group("seconds")
+    return min(float(seconds), MAX_MARKED_PAUSE) if seconds else SCENE_PAUSE
+
+
 def boundary_pause(current, following, dialogue_pause):
+    if following.role == PAUSE and (seconds := marked_pause(following.text)) is not None:
+        return seconds
     if current.role == PAUSE or following.role == PAUSE or HEADING_RE.match(current.text) \
             or HEADING_RE.match(following.text):
         return SCENE_PAUSE

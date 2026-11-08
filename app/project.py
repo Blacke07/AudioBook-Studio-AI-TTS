@@ -28,6 +28,7 @@ PROBES = WORK / "previews"
 EXPORT = LAYOUT.audiobooks
 CHAPTER_RE = re.compile(r"^\s*(\d+)\s*[-–—.]?\s*(.*)$")
 
+ENGINES = ("qwen", "voxcpm")  # what reads the narrator's fixed voice
 DEFAULT_SETTINGS = {
     "narrator": {
         "mode": "VoiceDesign",
@@ -37,6 +38,7 @@ DEFAULT_SETTINGS = {
         "instructions": "",
         "seed": 42,
         "temperature": 0.55,
+        "engine": "qwen",           # qwen, or voxcpm: the fixed narrator voice read by VoxCPM2 with delivery
     },
     "voice_variation": {},          # voice name -> own performance variation; a voice without one follows the narrator's
     "multi_voice": True,
@@ -48,6 +50,11 @@ DEFAULT_SETTINGS = {
     "export_quality": "standard",
     "volume_format": "m4b",
     "author": "",
+    "cover": "",                    # a JPG or PNG for the exported files; empty: cover.jpg in the chapter folder
+    "spell_out": False,             # read numbers, money, times and titles in words (Dr. -> Doctor, 1998 -> nineteen ninety-eight)
+    "retry_pace": True,             # make another take of a passage spoken far too fast or too slow (up to two more)
+    "level_passages": True,         # bring passages that are much louder or quieter than the chapter's usual level closer to it
+    "loudness": True,               # even out the loudness of every export (WAV is left as it is)
 }
 
 
@@ -104,6 +111,8 @@ def load_settings():
     narrator = settings["narrator"]
     narrator["description"] = narrator["description"] or PROFILES.get(narrator["profile"], "")
     narrator["instructions"] = narrator["instructions"] or AUTHOR_DELIVERY
+    if narrator["engine"] not in ENGINES:
+        narrator["engine"] = "qwen"
     settings["video"] = asdict(VideoSettings.from_dict(saved.get("video", {})))
     return settings
 

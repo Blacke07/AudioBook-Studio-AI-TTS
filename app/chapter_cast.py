@@ -10,6 +10,25 @@ from dialogue import NARRATOR, PAUSE, UNASSIGNED
 from project_package import clean_script, encoded
 
 
+def replace_speakers(script, replacements):
+    """Preserve text and takes while replacing identity anchors and their obsolete voice overrides."""
+    updated = deepcopy(script)
+    for index, target in replacements.items():
+        source = updated['rows'][index][0]
+        updated['rows'][index][0] = target
+        updated.get('attribution', {}).pop(str(index), None)
+        for entry in updated.get('spoken_text', {}).get('lines', []):
+            if entry.get('row') == index and entry.get('speaker') == source:
+                entry['speaker'] = target
+    local = updated.get('voice_rules', {})
+    overrides = local.get('lines', [])
+    removed = sum(entry['row'] in replacements for entry in overrides)
+    if overrides:
+        local['lines'] = [entry for entry in overrides if entry['row'] not in replacements]
+    updated['speakers'] = list(dict.fromkeys(row[0] for row in updated['rows'] if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
+    return updated, removed
+
+
 def plan(request):
     source, target, scope = request.get('source'), request.get('target'), request.get('scope')
     names = {row[0] for row in glossary.load()}
@@ -39,21 +58,7 @@ def plan(request):
             continue
         if script['source_hash'] != project.text_hash(chapter.text()):
             raise ValueError(f'{chapter.stem}: source text changed; review this chapter before a batch replacement.')
-        updated = deepcopy(script)
-        for i in indices:
-            updated['rows'][i][0] = target
-            updated.get('attribution', {}).pop(str(i), None)  # Absence means an explicit author choice.
-        # Identity changes deliberately drop the old speaker's line-level voice choice. Other overrides stay.
-        local = updated.get('voice_rules', {})
-        overrides = local.get('lines', [])
-        removed = len([entry for entry in overrides if entry['row'] in indices])
-        if overrides:
-            local['lines'] = [entry for entry in overrides if entry['row'] not in indices]
-        # Spoken words stay on the exact same row/text; only the identity anchor changes.
-        for entry in updated.get('spoken_text', {}).get('lines', []):
-            if entry.get('row') in indices and entry.get('speaker') == source:
-                entry['speaker'] = target
-        updated['speakers'] = list(dict.fromkeys(row[0] for row in updated['rows'] if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
+        updated, removed = replace_speakers(script, dict.fromkeys(indices, target))
         clean_script(updated)
         writes[chapter.script_file.relative_to(project.ROOT).as_posix()] = encoded(updated)
         total += len(indices)

@@ -3,8 +3,9 @@ from datetime import datetime
 
 import glossary
 import model_profile
+import narration_states
 import project
-from auto_speakers import AnalysisError, BATCH, REPAIR_BATCH, attribute
+from auto_speakers import AnalysisError, BATCH, REPAIR_BATCH, attribute, release_model
 from conversion import LOCK, NotReady, chapter_plan, passage_file
 from dialogue import NARRATOR, PAUSE, UNASSIGNED, prepare_script
 from engine_client import close_engine
@@ -13,11 +14,14 @@ CHARS_PER_SECOND = 14.5      # rough speech-duration estimate
 # GPU seconds per audio second, one passage at a time. Standard (F32): RTF 0.42 + overhead, measured.
 RENDER_FACTOR = model_profile.CURRENT["render_factor"]
 FIXED_RENDER_FACTOR = 0.25   # rough fixed-reference rendering estimate
+VOXCPM_RENDER_FACTOR = 1.0   # VoxCPM2 on an RTX 4080 Laptop, measured 07.11.2026: 1.0 s of GPU per audio second
 
 
 def render_factor():
     import fixed_voices
-    return FIXED_RENDER_FACTOR if fixed_voices.get(NARRATOR) else RENDER_FACTOR
+    if not fixed_voices.get(NARRATOR):
+        return RENDER_FACTOR
+    return VOXCPM_RENDER_FACTOR if project.load_settings()["narrator"].get("engine") == "voxcpm" else FIXED_RENDER_FACTOR
 
 # Chapter states shown in the GUI, in the order a chapter goes through them.
 STATES = {
@@ -40,13 +44,14 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
     entries = glossary.load()
     from character_registry import scoped_rows, register_analysis
     entries = scoped_rows(entries, chapter.volume)
-    proposals, deliveries = {}, {}
-    if use_ai and settings["multi_voice"]:
+    proposals, deliveries, narration = {}, {}, {}
+    moods = bool(use_ai and settings["narrator"].get("engine") == "voxcpm")  # a voice that follows a style hint
+    if use_ai:
         with LOCK:
             close_engine()  # Gemma needs the GPU memory Qwen holds
             try:
                 rows, _, entries, report, speakers, attribution = attribute(text, entries, settings["narrator"]["mode"],
-                                                               progress, release,
+                                                               progress, release and not moods,
                                                                batch_size=REPAIR_BATCH if repair else BATCH, proposals=proposals,
                                                                volume=chapter.volume, chapter=chapter.stem,
                                                                source_hash=project.text_hash(text), deliveries=deliveries)
@@ -54,6 +59,12 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
                 project.write_json(chapter.work / "analysis-error.json",
                                    {**error.diagnostic, "source_hash": project.text_hash(text)})
                 raise
+            if moods:
+                try:
+                    narration = narration_states.propose(rows, progress)
+                finally:
+                    if release:
+                        release_model()
     else:
         rows = manual_script(chapter, entries)["rows"]
         attribution = {}
@@ -62,20 +73,24 @@ def analyze(chapter, use_ai, settings, progress=lambda fraction, desc="": None, 
             if name not in {row[0] for row in entries}:
                 entries.append(glossary.propose(name, "unknown", entries))
         report = "Split without AI. Dialogue without explicit speaker tags remains unassigned."
-    rows, added = register_analysis(rows, entries, chapter.volume, proposals) if use_ai and settings['multi_voice'] else (rows, glossary.add_missing(entries))
+    rows, added = register_analysis(rows, entries, chapter.volume, proposals) if use_ai else (rows, glossary.add_missing(entries))
     speakers = list(dict.fromkeys(row[0] for row in rows if row[0] not in (NARRATOR, PAUSE, UNASSIGNED)))
     rows = [[*row[:3], 0] for row in rows]
     from voice_rules import reconcile
     from spoken_text import reconcile as reconcile_spoken
     import delivery
     new = {"source_hash": project.text_hash(text), "rows": rows, "report": report, "attribution": attribution,
-           "speakers": speakers, "added": added, "ai": bool(use_ai and settings["multi_voice"]),
+           "speakers": speakers, "added": added, "ai": bool(use_ai),
            "analyzed": datetime.now().isoformat(timespec="seconds")}
-    if deliveries:
-        new["delivery"] = delivery.proposals(rows, deliveries)
-        proposed = len(new["delivery"]["lines"])
-        new["report"] += (f"\nGemma proposed an emotion for {proposed} of {len(deliveries)} dialogue lines; the others "
-                          "stay neutral. Review the proposals beside each line; your own choices are kept.")
+    if deliveries or narration:
+        new["delivery"] = delivery.proposals(rows, {**deliveries, **narration})
+        proposed = sum(entry["row"] in deliveries for entry in new["delivery"]["lines"])
+        if deliveries:
+            new["report"] += (f"\nGemma proposed an emotion for {proposed} of {len(deliveries)} dialogue lines; the others "
+                              "stay neutral. Review the proposals beside each line; your own choices are kept.")
+        if narration:
+            new["report"] += (f"\nGemma proposed a mood for {len(narration)} narration paragraphs; the others stay "
+                              "neutral. Change any of them beside the paragraph.")
     old = chapter.script()
     # Gemma's emotions are new proposals; the author's own choices are kept on their lines.
     chapter.save_script(delivery.reconcile(old, reconcile_spoken(old, reconcile(old, new))))
@@ -112,6 +127,8 @@ def status(chapter, settings, glossary_rows):
                                       or details["narrator_fallback"]))
     if script is not None:
         details["unclear"] = project.unclear_count(script)
+    from speaker_review import pending_ids
+    details['speaker_review_count'] = len(pending_ids(script)) if script and script['source_hash'] == project.text_hash(text) else 0
     if chapter.error_file.exists():
         details["error"] = chapter.error_file.read_text(encoding="utf-8")
         if details["error"].startswith("analysis:"):
@@ -126,7 +143,7 @@ def status(chapter, settings, glossary_rows):
     if settings["multi_voice"] and script is None:
         return ("error" if "error" in details else "new"), details
     try:
-        _, _, keys = chapter_plan(chapter, settings, glossary_rows, text)
+        chunks, _, keys = chapter_plan(chapter, settings, glossary_rows, text)
     except NotReady as reason:
         details["reason"] = str(reason)
         if script is not None and script["source_hash"] != project.text_hash(text):
@@ -135,8 +152,10 @@ def status(chapter, settings, glossary_rows):
     except ValueError as error:
         details["reason"] = str(error)
         return "error", details
-    identity_matches = not script or all(p.get('line', -1) < 0 or
-        p['line'] < len(script['rows']) and script['rows'][p['line']][0] == p.get('role') for p in (meta or {}).get('passages', []))
+    # Metadata follows the rendered plan: single-voice and unresolved-speaker fallback deliberately
+    # use Narrator, even when the saved script names a character or Unassigned.
+    identity_matches = [(p.get('line'), p.get('role')) for p in (meta or {}).get('passages', [])] == [
+        (chunk.line, chunk.role) for chunk in chunks]
     if meta and meta["keys"] == keys and identity_matches and chapter.audio_file.exists():
         extension = project.export_extension(settings)
         exported = chapter.export_path(extension)

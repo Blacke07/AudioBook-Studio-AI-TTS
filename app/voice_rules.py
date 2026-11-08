@@ -157,7 +157,8 @@ def cast(volume=None):
     return {'categories':org['categories'], 'characters':[{'name':row[0], 'read_as':general.get(row[0], row[0]), 'explicit_read_as':explicit.get(row[0]),
                            **org['characters'][row[0]],
                            'lines':counts[row[0]], 'chapters':len(chapters.get(row[0], set())),
-                           'fixed':bool(fixed_voices.get(row[0]))} for row in rows],
+                           'fixed':bool(fixed_voices.get(row[0])),
+                           'reading_fixed':bool(fixed_voices.get(general.get(row[0], row[0])))} for row in rows],
             'voices':[NARRATOR, *glossary.voice_names(rows)],
             'can_undo':transfer.target(UNDO).is_file()}
 
@@ -165,9 +166,10 @@ def cast(volume=None):
 def _sound(chapter, settings, rows, rules, script=None, registry_document=None, enforce_status=True):
     from conversion import chapter_plan
     chunks, voices, keys = chapter_plan(chapter, settings, rows, routing_rules=rules, script_override=script, registry_document=registry_document, enforce_status=enforce_status)
+    spoken = {row for chunk in chunks for row in (chunk.line, *chunk.joined_rows)}
     return {'signature':digest([[key,chunk.pause_after] for key,chunk in zip(keys,chunks)]),
             'omitted':[i for i,row in enumerate((script or chapter.script())['rows'])
-                       if row[0] == NARRATOR and i not in {chunk.line for chunk in chunks}]}
+                       if row[0] == NARRATOR and i not in spoken]}
 
 
 def plan(request):

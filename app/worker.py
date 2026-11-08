@@ -14,6 +14,7 @@ import export
 import glossary
 import pipeline
 import project
+import speaker_review
 import video_jobs
 from video import VideoCancelled
 from auto_speakers import release_model
@@ -106,6 +107,29 @@ class Worker:
         if job.get("automatic") and settings["video"]["enabled"] and "video" not in steps:
             steps.append("video")
 
+        if 'review' in steps:
+            self._set(phase='Reviewing speakers', total=len(selected), done=0)
+            try:
+                for index, chapter in enumerate(selected):
+                    if self._stop.is_set():
+                        return
+                    self._set(chapter=chapter.stem, done=index, message='Gemma is rechecking uncertain lines with adjacent context')
+                    def progress(fraction, desc=''):
+                        if self._stop.is_set():
+                            raise InterruptedError('Speaker review stopped. Saved assignments were kept.')
+                        self._set(fraction=fraction, message=desc)
+                    try:
+                        result = speaker_review.run(chapter, settings, progress, release=False, cancelled=self._stop.is_set)
+                        self._log(f"Reviewed speakers in {chapter.stem}: {result['reviewed']} rechecked, "
+                                  f"{result['changed']} changed, {result['unresolved']} still unassigned")
+                    except InterruptedError as error:
+                        self._log(str(error))
+                        return
+                    except Exception as error:
+                        self._fail(chapter, 'speaker review', error)
+            finally:
+                release_model()
+
         if "analyze" in steps:
             rows = glossary.load()
             todo = [chapter for chapter in selected
@@ -116,7 +140,7 @@ class Worker:
                     if self._stop.is_set():
                         return
                     self._set(chapter=chapter.stem, done=index, fraction=index / max(len(todo), 1),
-                              message="Gemma is identifying speakers" if settings["multi_voice"] else "Preparing text")
+                              message="Gemma is identifying speakers")
                     try:
                         mode = job.get("analysis_mode", "normal")
                         _, _, added = pipeline.analyze(chapter, True, settings, release=False,
@@ -128,8 +152,7 @@ class Worker:
                     except Exception as error:
                         self._fail(chapter, "analysis", error)
             finally:
-                if settings["multi_voice"]:
-                    release_model()
+                release_model()
 
         if "render" in steps:
             if self._blocked(selected, settings, "render"):

@@ -84,7 +84,8 @@ class SpokenTextTests(unittest.TestCase):
         self.save(self.request());settings=project.load_settings();settings['multi_voice']=False
         chunks,_,_=conversion.chapter_plan(self.chapter,settings)
         self.assertTrue(any('burning…' in chunk.text for chunk in chunks))
-        self.assertTrue(all(chunk.role=='Narrator' for chunk in chunks))
+        self.assertTrue(all((chunk.voice_role or chunk.role)=='Narrator' for chunk in chunks))
+        self.assertTrue(any(chunk.role=='Ada' for chunk in chunks))
 
     def test_source_change_blocks_saving(self):
         self.chapter.path.write_text('New source',encoding='utf-8')

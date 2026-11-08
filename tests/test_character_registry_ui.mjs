@@ -161,8 +161,10 @@ test('row bindings target table rows, never the action buttons inside them', () 
 
 test('chapter blockers are listed separately from line review', () => {
   const app = readFileSync(new URL('../app/web/app.js', import.meta.url), 'utf8');
+  const notices = readFileSync(new URL('../app/web/chapter-notices.js', import.meta.url), 'utf8');
   assert.match(app, /Lines to review \(/);
-  assert.ok(app.includes('approval in this chapter'));
+  assert.match(notices, /character needs/);
+  assert.match(notices, /data-review-character/);
   assert.match(app, /data-review-character/);
   assert.match(app, /line\.basis === "context"/);
   assert.match(app, /Speaker inferred from narrative context/);

@@ -15,6 +15,8 @@ import uvicorn
 import delivery
 import emotions
 import emotion_audition
+import engine_client
+import epub_import
 import export
 import fixed_voices
 import glossary
@@ -27,6 +29,7 @@ import project_transfer
 from project_api import create_router
 from project_access import ProjectAccess
 import video_jobs
+import voxcpm_setup
 import voice_check
 import voice_rules
 import spoken_text
@@ -118,7 +121,7 @@ async def project_consistency(request, call_next):
     # only settings/cast/script/volume changes and import/Undo need exclusive access.
     path = request.url.path
     if (path.startswith('/api/') and not path.startswith('/api/project')
-            and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder','/api/video/codecs')):
+            and path not in ('/api/status','/api/stop','/api/audio','/api/pick-folder','/api/pick-epub','/api/video/codecs')):
         write = request.method in ('PUT','DELETE') or path in (
             '/api/volumes','/api/characters/new','/api/characters/own-voice','/api/voices/fix','/api/voices/unfix',
             '/api/presets/apply','/api/chapter/split')
@@ -206,6 +209,34 @@ def pick_folder():
     return {"path": str(Path(result["path"])) if result.get("path") else ""}
 
 
+@app.post("/api/pick-epub")
+def pick_epub():
+    """A native Windows file dialog for an EPUB book."""
+    result = {}
+
+    def ask():
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        result["path"] = filedialog.askopenfilename(title="Choose an EPUB book", parent=root,
+                                                    filetypes=[("EPUB book", "*.epub")])
+        root.destroy()
+
+    thread = threading.Thread(target=ask)
+    thread.start()
+    thread.join()
+    return {"path": str(Path(result["path"])) if result.get("path") else ""}
+
+
+@app.post("/api/epub/convert")
+def convert_epub(data: dict = Body(...)):
+    """Write the chapters of an EPUB as numbered TXT files in a new folder beside it; the book itself is only read."""
+    folder, count = epub_import.convert(data.get("path", ""))
+    return {"folder": str(folder), "chapters": count}
+
+
 @app.get("/api/volumes/{name}")
 def volume(name: str):
     settings = project.load_settings()
@@ -218,8 +249,10 @@ def volume(name: str):
 @app.post("/api/run")
 def run(data: dict = Body(...)):
     steps = data.get("steps", ["analyze", "render", "export"])
-    if not isinstance(steps, list) or not steps or set(steps) - {"analyze", "render", "export", "volume", "video"}:
+    if not isinstance(steps, list) or not steps or set(steps) - {"analyze", "review", "render", "export", "volume", "video"}:
         raise ValueError("Unknown queue steps.")
+    if 'review' in steps and steps != ['review']:
+        raise ValueError('Review speakers is a separate pass. Review its results before generating audio.')
     chapters = project.chapters(data["volume"])
     stems = data.get("stems") or [chapter.stem for chapter in chapters]
     if not isinstance(stems, list) or not all(isinstance(stem, str) for stem in stems) or len(set(stems)) != len(stems):
@@ -227,6 +260,10 @@ def run(data: dict = Body(...)):
     selected = [chapter for chapter in chapters if chapter.stem in stems]
     if not selected or len(selected) != len(stems):
         raise ValueError("The requested chapters no longer exist. Refresh the volume.")
+    if steps == ['review']:
+        from speaker_review import pending_ids
+        if not any(pending_ids(chapter.script()) for chapter in selected):
+            raise ValueError('No unassigned or context-inferred speakers to recheck in this batch. Character approval is handled in Characters.')
     if "render" in steps and "analyze" not in steps:
         pipeline.require_ready(selected, project.load_settings(), "render")
     if any(step in steps for step in ("export", "video", "volume")) and not {"analyze", "render"}.intersection(steps):
@@ -256,14 +293,14 @@ def chapter(volume: str, stem: str):
     manual_draft = script is None or script["source_hash"] != project.text_hash(item.text())
     if manual_draft:
         script = pipeline.manual_script(item, rows)
-    meta = {} if manual_draft else project._read_json(item.audio_meta, None) or {}
+    meta = {} if manual_draft or info['state'] not in ('generated', 'exported') else project._read_json(item.audio_meta, None) or {}
     takes = {}
     for passage in meta.get("passages", []):
         takes.setdefault(passage["line"], []).append(passage)
     missing = {}  # line -> (role, emotion) read with the neutral take
     try:  # rows the current plan does not read (plain speech tags of fixed voices)
         chunks, voices, _ = chapter_plan(item, settings, rows)
-        spoken = {chunk.line for chunk in chunks}
+        spoken = {row for chunk in chunks for row in (chunk.line, *chunk.joined_rows)}
         gaps = missing_takes(chunks, voices)
         missing = {chunk.line: (chunk.voice_role or chunk.role, chunk.emotion) for chunk in chunks
                    if (chunk.voice_role or chunk.role, chunk.emotion) in gaps}
@@ -296,7 +333,7 @@ def chapter(volume: str, stem: str):
                           for number in set(scenes)}
         for index, row in enumerate(script["rows"]):
             bound = scene_contexts[scenes[index]]
-            line = {"speaker": row[0], "display_name":display_names.get(index,row[0]), "read_as":reading.get(index,row[0]), "text": row[1], "split_points":split_points(row[1]), "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
+            line = {"speaker": row[0], "display_name":display_names.get(index,row[0]), "read_as":reading.get(index,row[0]) if settings['multi_voice'] else NARRATOR, "text": row[1], "split_points":split_points(row[1]), "spoken_text":spoken_edits.get(index,row[1]), "joined": bool(row[2]),
                     "variant": int(row[3]) if len(row) > 3 else 0,
                     "flagged": index in meta.get("flagged_lines", []),
                     "scene": scenes[index],
@@ -312,7 +349,7 @@ def chapter(volume: str, stem: str):
                 line["emotion_missing"] = f"No {emotions.label(missing[index][1]).lower()} take for {missing[index][0]}"
             if index in takes:
                 line["start"] = takes[index][0]["start"]
-                line["seconds"] = round(sum(take["seconds"] for take in takes[index]), 2)
+                line["seconds"] = round(max(take['start'] + take['seconds'] for take in takes[index]) - line['start'], 3)
             lines.append(line)
     used = sorted({row[0] for row in script["rows"]}) if script else []
     blockers = []
@@ -725,6 +762,7 @@ def get_settings():
             "emotion_samples": {key: fixed_voices.emotion_sample(NARRATOR, key)
                                 for key in emotions.KEYS if key != emotions.NEUTRAL},
             "model_profile": {key: model_profile.CURRENT[key] for key in ("name", "label", "gemma")},
+            "voxcpm": engine_client.voxcpm_runtime() is not None,
             "video_factor": video_jobs.measurement(project.load_settings())}
 
 
@@ -734,7 +772,43 @@ def put_settings(data: dict = Body(...)):
     narrator = settings["narrator"]
     voice_parameters(MODEL_NAMES[narrator["mode"]], narrator["speaker"],
                      narrator["description"] or describe(narrator["profile"]), narrator["instructions"])
+    engine = narrator.get("engine", "qwen")
+    if engine not in project.ENGINES:
+        raise ValueError("Choose Qwen or VoxCPM2 as the narrator's engine.")
+    if engine == "voxcpm" and engine_client.voxcpm_runtime() is None:
+        raise ValueError("The VoxCPM2 engine is not installed.")
+    cover = str(settings.get("cover", "")).strip().strip('"')
+    if cover and export.find_cover({"cover": cover}) is None:
+        raise ValueError("The cover image was not found. Use the full path of a JPG or PNG file, or leave it empty.")
     return {"settings": project.save_settings(settings)}
+
+
+@app.get("/api/voxcpm")
+def voxcpm_status():
+    return voxcpm_setup.status()
+
+
+@app.post("/api/voxcpm/install")
+def voxcpm_install():
+    """Set up the optional VoxCPM2 engine in the background (about 8 GB); poll GET /api/voxcpm for progress."""
+    return {"started": voxcpm_setup.start(), **voxcpm_setup.status()}
+
+
+@app.post("/api/voxcpm/link")
+def voxcpm_link(data: dict = Body(...)):
+    with worker.idle_guard("changing the VoxCPM2 engine"):
+        return voxcpm_setup.link(data.get("python", ""), data.get("model", ""))
+
+
+@app.post("/api/voxcpm/unlink")
+def voxcpm_unlink():
+    """Forget the VoxCPM2 engine; a narrator set to read with it goes back to Qwen."""
+    with worker.idle_guard("changing the VoxCPM2 engine"):
+        settings = project.load_settings()
+        if settings["narrator"].get("engine") == "voxcpm":
+            settings["narrator"]["engine"] = "qwen"
+            project.save_settings(settings)
+        return voxcpm_setup.unlink()
 
 
 @app.post("/api/narrator/preview")

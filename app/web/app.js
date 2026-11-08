@@ -99,10 +99,10 @@ function colorFor(name) {
   return `hsl(${PALETTE[hash % PALETTE.length]} 58% 50%)`;
 }
 
-const STATE_CLASS = { new: "", modified: "warn", needs_review: "warn", analyzed: "info", partial: "info",
+const STATE_CLASS = { new: "", modified: "warn", needs_review: "warn", analyzed: "ok", partial: "warn",
   outdated: "warn", generated: "ok", exported: "ok", error: "bad" };
-const STATE_COLOR = { new: "var(--line)", modified: "var(--warn)", needs_review: "var(--warn)", analyzed: "var(--info)",
-  partial: "var(--info)", outdated: "var(--warn)", generated: "var(--ok)", exported: "var(--ok)", error: "var(--bad)" };
+const STATE_COLOR = { new: "var(--line)", modified: "var(--warn)", needs_review: "var(--warn)", analyzed: "var(--ok)",
+  partial: "var(--warn)", outdated: "var(--warn)", generated: "var(--ok)", exported: "var(--ok)", error: "var(--bad)" };
 const STATE_LABEL = { new: "Not analyzed", modified: "Text changed", needs_review: "Needs review", analyzed: "Ready to generate",
   partial: "Partly generated", outdated: "Audio outdated", generated: "Generated", exported: "Exported", error: "Error" };
 const chip = (state, label, why) => `<span class="chip ${STATE_CLASS[state] || ""}${why ? " has-reason" : ""}"${why ? ` title="${esc(why)}"` : ""}>${esc(label || STATE_LABEL[state])}</span>`;
@@ -238,6 +238,8 @@ async function addVolumeDialog() {
   const body = `<p class="muted">Choose the folder containing your chapters, such as Volume 1. Source files are never modified.</p>
     <label class="field"><span>Chapter folder</span><div class="row" style="flex-wrap:nowrap"><input type="text" name="source" id="vol-source" placeholder="C:\\...\\Volume 1">
     <button class="btn" type="button" id="pick">${icon("folder")} Browse…</button></div></label>
+    <div class="row" style="flex-wrap:nowrap"><button class="btn" type="button" id="pick-epub">${icon("book")} Import an EPUB…</button>
+    <span class="small muted">The book's chapters are written as TXT files in a new folder beside it, and that folder is used here.</span></div>
     <label class="field"><span>Volume name</span><input type="text" name="name" id="vol-name" placeholder="defaults to the folder name"></label>`;
   const pending = modal("Add a volume", body, [{ label: "Cancel", value: null }, { label: "Add volume", value: "form", primary: true }]);
   $("#pick").onclick = () => guard(async () => {
@@ -246,6 +248,14 @@ async function addVolumeDialog() {
       $("#vol-source").value = result.path;
       if (!$("#vol-name").value) $("#vol-name").value = result.path.split(/[\\/]/).pop();
     }
+  });
+  $("#pick-epub").onclick = () => guard(async () => {
+    const book = await api("/api/pick-epub", { method: "POST" });
+    if (!book.path) return;
+    const result = await api("/api/epub/convert", { method: "POST", body: { path: book.path } });
+    $("#vol-source").value = result.folder;
+    if (!$("#vol-name").value) $("#vol-name").value = book.path.split(/[\/]/).pop().replace(/\.epub$/i, "");
+    toast(`${result.chapters} chapters were written to ${result.folder}`);
   });
   const form = await pending;
   if (!form) return;
@@ -305,7 +315,7 @@ async function viewVolume(name) {
     <div class="crumbs"><a href="#/">Volumes</a> ›</div>
     <div class="page-head"><div><h1>${esc(name)}</h1><p class="small">${esc(data.volume.source)}</p></div>
       <div class="row"><button class="btn" id="edit-volume">Edit volume</button><button class="btn" id="remove-volume">Remove volume</button><button class="btn" id="open-source">${icon("folder")} Chapters</button><button class="btn" id="open-export">${icon("download")} Exported files</button><button class="btn" id="run-volume" ${chapters.length && !chapters.some((c) => !c.can_export) ? "" : `disabled title="Generate current audio for every chapter in this volume."`}>${icon("book")} Export the whole volume</button></div></div>
-    <div class="card">
+    <div class="volume-layout"><section class="volume-main"><div class="card">
       <div class="stats" style="margin-top:0">
         <div class="stat"><b>${chapters.length}</b><span>chapters</span></div>
         <div class="stat"><b>${duration(estimated)}</b><span>estimated audio</span></div>
@@ -314,7 +324,7 @@ async function viewVolume(name) {
       </div>
       <div class="stackbar">${bar}</div>
       <hr class="soft">
-      <div class="row between">
+      <div class="workflow-overview">
         <div><h3>Run automatically <span class="muted small" style="font-family:var(--sans);font-weight:400">${target}</span></h3>
           <div class="muted small" style="max-width:600px">Analyze dialogue, generate audio and export each chapter. The entire batch waits if any chapter needs speaker review or an analysis repair. You can stop at any time.</div></div>
         <button class="btn primary big" id="run-all">${icon("play")} Run automatically</button>
@@ -322,27 +332,27 @@ async function viewVolume(name) {
       ${ChapterWorkflow.html(chapters, name)}
       <p class="muted small">The entire selected batch must finish text review before audio starts. Without a selection, the batch is the whole volume. Automatic processing pauses here if any chapter needs review. ${data.video_enabled ? "It also creates video after current audio is exported." : "Automatic video is off."}</p>
     </div>
-    <div class="card" id="volume-cast"></div>
+    </section><aside class="volume-side" aria-label="Volume cast"><div class="card" id="volume-cast"></div></aside><section class="volume-chapters" aria-label="Chapters">
     ${counts.needs_review ? `<div class="banner" style="margin-top:16px">${icon("flag")}<div><b>${counts.needs_review} ${counts.needs_review === 1 ? "chapter needs" : "chapters need"} your review.</b> Some lines have uncertain speakers. Open those chapters and choose the speaker for each highlighted line.</div></div>` : ""}
     ${counts.error ? `<div class="banner" style="margin-top:16px;background:var(--bad-soft);color:var(--bad)">${icon("info")}<div><b>${counts.error} ${counts.error === 1 ? "chapter has an error" : "chapters have errors"}.</b> Choose Diagnose / repair in Text, or beside the affected chapter.</div></div>` : ""}
     <div class="card" style="margin-top:16px">
       <div class="filters">${[["all", `All (${chapters.length})`], ...Object.keys(STATE_LABEL).filter((s) => counts[s]).map((s) => [s, `${STATE_LABEL[s]} (${counts[s]})`])]
         .map(([key, label]) => `<span class="chip ${key === "all" ? "" : STATE_CLASS[key]} ${volumeFilter === key ? "on" : ""}" data-filter="${key}">${label}</span>`).join("")}</div>
-      <table class="chapters"><thead><tr><th class="check"><label class="chapter-select"><input type="checkbox" id="all" aria-label="Select all visible chapters" ${visible.length ? "" : "disabled"}></label></th><th>No.</th><th>Title</th><th>Duration</th><th>Status</th><th></th></tr></thead>
+      <div class="chapter-table-wrap"><table class="chapters"><thead><tr><th class="check"><label class="chapter-select"><input type="checkbox" id="all" aria-label="Select all visible chapters" ${visible.length ? "" : "disabled"}></label></th><th>No.</th><th>Title</th><th>Duration</th><th>Status</th><th aria-label="Chapter actions"></th></tr></thead>
       <tbody>${visible.map((c) => `<tr class="clickable" data-stem="${esc(c.stem)}">
         <td class="check"><label class="chapter-select"><input type="checkbox" data-select="${esc(c.stem)}" aria-label="Select ${esc(c.title)}" ${selected.has(c.stem) ? "checked" : ""}></label></td>
         <td class="num">${c.number ?? ""}</td>
-        <td>${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.analysis_problem ? "Speaker analysis needs repair." : c.error)}</div><button class="btn" data-diagnose="${esc(c.stem)}">Diagnose / repair</button>` : ""}</td>
+        <td class="chapter-title">${esc(c.title)}${c.error ? `<div class="small" style="color:var(--bad)">${esc(c.analysis_problem ? "Speaker analysis needs repair." : c.error)}</div><button class="btn" data-diagnose="${esc(c.stem)}">Diagnose / repair</button>` : ""}</td>
         <td class="dur">${c.seconds ? duration(c.seconds) : `~${duration(c.estimated_seconds)}`}</td>
         <td>${audioChip(c)}${c.state === "partial" ? `<span class="bar mini-bar"><i style="width:${c.progress * 100}%"></i></span>` : ""}
-          ${c.unclear ? `<span class="chip warn" title="unassigned dialogue">${c.unclear} unassigned</span>` : ""}
+          ${c.unclear ? `<button type="button" class="chip warn" data-open-unassigned title="Open this chapter's unassigned lines">${c.unclear} Unassigned</button>` : ""}
           ${c.flagged ? `<span class="chip" title="passages with unusual pacing">${icon("flag")} ${c.flagged}</span>` : ""}
           <div style="margin-top:4px">${videoChip(c)}</div>${c.video.error ? `<div class="small" style="color:var(--bad)">Video: ${esc(c.video.error)}</div>` : ""}</td>
         <td class="row-tools">${rowTools(c)}</td>
-      </tr>`).join("")}</tbody></table>
+      </tr>`).join("")}</tbody></table></div>
       ${visible.length ? "" : `<div class="empty">No chapters in this category.</div>`}
     </div>
-    <audio id="volume-player" controls class="hidden" style="width:100%;margin-top:14px"></audio>`;
+    <audio id="volume-player" controls class="hidden" style="width:100%;margin-top:14px"></audio></section></div>`;
 
   const run = (steps, button) => guard(async () => {
     const stems = steps.includes("volume") ? chapters.map(c => c.stem) : [...selected];
@@ -362,7 +372,8 @@ async function viewVolume(name) {
     pollNow();
   }, button);
   ChapterWorkflow.bind();
-  $("#review-text").onclick = () => { volumeFilter = "needs_review"; viewVolume(name); };
+  $("#review-text").onclick = e => guard(() => ChapterWorkflow.reviewSpeakers(name,
+    chapters.filter(c => !selected.size || selected.has(c.stem))),e.currentTarget);
   $("#diagnose-text").onclick = (e) => guard(() => ChapterWorkflow.diagnoseBatch(name,
     chapters.filter(c => c.error && (!selected.size || selected.has(c.stem)))), e.currentTarget);
   $("#run-all").disabled = !chapters.length;
@@ -394,6 +405,11 @@ async function viewVolume(name) {
     box.checked ? selected.add(box.dataset.select) : selected.delete(box.dataset.select); viewVolume(name);
   });
   $$("tr.clickable").forEach((row) => row.onclick = (event) => {
+    if (event.target.closest('[data-open-unassigned]')) {
+      lineFilter = 'review';
+      location.hash = `#/chapter/${encodeURIComponent(name)}/${encodeURIComponent(row.dataset.stem)}`;
+      return;
+    }
     const diagnostic = event.target.closest("[data-diagnose]");
     if (diagnostic) { guard(() => ChapterWorkflow.diagnose(name, row.dataset.stem), diagnostic); return; }
     const cell = event.target.closest("td.check");
@@ -417,10 +433,22 @@ function nextToResolve(lines, from) {
   const open = lines.flatMap((line, at) => (line.speaker === UNASSIGNED ? [at] : []));
   return open.find((at) => at > from) ?? open[0] ?? null;
 }
-/* Lines still waiting for the author, in reading order, with why. */
+/* Speaker assignment is separate from emotion, context and pacing review. */
 function reviewQueue(lines) {
-  const why = (line) => line.speaker === UNASSIGNED ? "Unassigned" : line.basis === "context" ? "Context" : line.flagged ? "Pacing" : line.emotion_source === "ai" ? "Emotion" : "";
-  return lines.flatMap((line, index) => (why(line) ? [{ index, why: why(line), text: line.text }] : []));
+  return lines.flatMap((line, index) => line.speaker === UNASSIGNED ? [{ index, why: "Unassigned", text: line.text }] : []);
+}
+function matchesLineFilter(line, filter) {
+  if (filter === "review") return line.speaker === UNASSIGNED;
+  if (filter === "dialogue") return ![NARRATOR, PAUSE].includes(line.speaker);
+  return true;
+}
+/* Prefer the latest interval at a boundary; omitted rows have no interval. */
+function playbackLine(lines, time) {
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index];
+    if (line.start != null && time >= line.start && time < line.start + line.seconds) return index;
+  }
+  return null;
 }
 const stickyHeader = {
   get() { try { return localStorage.getItem("chapterMenuSticky") === "1"; } catch { return false; } },
@@ -432,10 +460,8 @@ async function viewChapter(volume, stem, after = {}) {
   const c = data.chapter, lines = data.lines;
   const unclear = lines.filter((l) => l.speaker === UNASSIGNED).length;
   const contextual = lines.filter((l) => l.basis === "context").length;
-  const proposed = lines.filter((l) => l.emotion_source === "ai").length;
   const reviewCount = reviewQueue(lines).length;
   const emotionLabel = (key) => (data.emotions || []).find((e) => e.key === key)?.label || key;
-  const missingTakes = (data.missing_takes || []).map((pair) => pair.split("|")).map(([role, emotion]) => `${esc(emotionLabel(emotion).toLowerCase())} for ${esc(role)}`);
   /* The line's emotion: Gemma's proposal is marked for review like a context speaker; a fixed voice without
      a take for it is read with its neutral take, and says so. */
   const emotionPick = (line, index) => line.speaker === PAUSE ? "" : `<span class="emotion-pick ${line.emotion === "neutral" && !line.emotion_source ? "quiet" : ""}"><select data-emotion="${index}" aria-label="Emotion of this line" title="${data.manual_draft ? "Analyze the chapter first to choose emotions." : "How this line is spoken. Changing it regenerates only this line."}" ${data.manual_draft ? "disabled" : ""}>${(data.emotions || []).map((e) => `<option value="${e.key}" ${e.key === line.emotion ? "selected" : ""}>${esc(e.label)}</option>`).join("")}</select>${line.emotion_source === "ai" ? `<span class="chip info" title="Proposed by Gemma from the line and its punctuation; review it.">AI</span><button type="button" class="btn ghost small" data-emotion-keep="${index}" title="Keep this emotion as your choice">Keep</button>` : ""}${line.emotion_missing ? `<span class="chip warn" title="This fixed voice has no approved take for this emotion, so its neutral take is used. Approve one in Characters.">${esc(line.emotion_missing)}</span>` : ""}</span>`;
@@ -446,8 +472,7 @@ async function viewChapter(volume, stem, after = {}) {
     return names.length ? names.join(", ") : "No context";
   };
   const speakers = [...new Set(lines.map((l) => l.speaker).filter((s) => ![NARRATOR, UNASSIGNED, PAUSE].includes(s)))];
-  const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) =>
-    lineFilter === "all" || (lineFilter === "dialogue" && ![NARRATOR, PAUSE].includes(line.speaker)) || (lineFilter === "review" && (line.speaker === UNASSIGNED || line.flagged || line.basis === "context" || line.emotion_source === "ai")));
+  const shown = lines.map((line, index) => ({ line, index })).filter(({ line }) => matchesLineFilter(line, lineFilter));
   const kind = (line) => line.speaker === PAUSE ? "pause" : HEADING.test(line.text) ? "heading" : line.speaker === NARRATOR ? "narration" : "speech";
   const pinned = stickyHeader.get();
   const queue = reviewQueue(lines);
@@ -459,7 +484,7 @@ async function viewChapter(volume, stem, after = {}) {
     : `<div class="next-prompt resolved" id="next-prompt" role="status"><span>${icon("check")} All speakers resolved${followUp}</span>
         <button class="btn ghost small" data-next-close>Close</button></div>`;
   const side = !lines.length ? "" : `<aside class="review-queue" aria-label="Lines to review">
-      <h3>To review ${queue.length ? `<span class="chip warn">${queue.length}</span>` : ""}</h3>
+      <h3>Unassigned ${queue.length ? `<span class="chip warn">${queue.length}</span>` : ""}</h3>
       ${queue.length ? `<ol>${queue.slice(0, 300).map((item) => `<li><button type="button" class="queue-item" data-queue-go="${item.index}"><span class="chip ${item.why === "Unassigned" ? "warn" : ""}">${item.why}</span><span class="queue-text">${esc(item.text)}</span></button></li>`).join("")}</ol>`
         : `<p class="queue-done">${icon("check")} Resolved</p>`}
     </aside>`;
@@ -467,31 +492,28 @@ async function viewChapter(volume, stem, after = {}) {
     <div class="crumbs"><a href="#/">Volumes</a> › <a href="#/volume/${encodeURIComponent(volume)}">${esc(volume)}</a> ›</div>
     <div class="page-head ${pinned ? "sticky" : ""}" id="chapter-head"><div><h1>${c.number != null ? `${c.number} · ` : ""}${esc(c.title)}</h1>
       <p>${audioChip(c)} ${c.seconds ? `<span class="chip">${duration(c.seconds)}</span>` : `<span class="chip">~${duration(c.estimated_seconds)}</span>`}
-      ${videoChip(c)} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
+      ${videoChip(c)} ${lines.length ? `<button type="button" class="chip ${unclear ? 'warn' : data.manual_draft ? '' : 'ok'}" data-unassigned ${unclear ? '' : 'disabled'} title="${unclear ? 'Show unassigned lines and go to the first one' : 'No unassigned lines'}">${icon(unclear ? 'flag' : 'check')} ${unclear ? `Unassigned (${unclear})` : 'Speakers assigned'}</button>` : ''} ${c.reason ? `<span class="small" style="margin-left:6px">${esc(c.reason)}</span>` : ""}</p></div>
       <div class="row"><button class="btn" id="reanalyze">${icon("wand")} ${!data.manual_draft ? "Analyze again" : "Analyze Text"}</button>
         <button class="btn primary" id="render" ${c.can_generate ? "" : 'disabled title="Finish text analysis and resolve speakers first."'}>${icon("play")} Generate chapter</button>
         <button class="btn" id="create-video" ${["generated", "exported"].includes(c.state) ? "" : 'disabled title="Generate current audio first"'}>${icon("play")} Create video</button>
         <button class="btn ghost icon-only" id="open" title="Open working folder">${icon("folder")}</button>
         <button class="btn ghost" id="pin-head" aria-pressed="${pinned}" title="Keep this menu and audio player visible while you scroll">${icon("pin")} Sticky menu</button></div>
-      ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio></div>` : ""}</div>
+      ${c.audio ? `<div class="player"><audio id="player" controls preload="metadata" src="${esc(c.audio)}"></audio>${['generated','exported'].includes(c.state)?'':'<small class="muted">Generate current audio to synchronize line highlighting and playback shortcuts.</small>'}</div>` : ""}</div>
     ${c.error ? `<div class="banner" style="background:var(--bad-soft);color:var(--bad)">${esc(c.error)}<button class="btn" id="diagnose-chapter">Diagnose / repair</button></div>` : ""}
-    ${data.manual_draft || c.analysis_problem ? `<div class="banner">${icon("book")}<div><b>Manual speaker editor</b><p>The text is available even if AI analysis fails. Choose a speaker beside each line or split a line; changes save without using Gemma. Your original chapter file is never edited.</p><button class="btn" id="save-manual">${data.manual_draft ? "Use manual assignments" : "Keep these assignments"}</button></div></div>` : ""}
-    ${c.video.url ? `<div class="row" style="margin:10px 0 16px"><a class="btn" href="${esc(c.video.url)}" target="_blank" rel="noopener">${icon("play")} Open video</a><button class="btn" id="show-video">${icon("folder")} Show in folder</button></div>` : ""}
+    ${ChapterNotices.html(data)}
     ${c.video.error ? `<div class="banner">Video: ${esc(c.video.error)}</div>` : ""}
     ${data.spoken_error ? `<div class="banner"><div><b>Spoken-text edits need review</b><p>${esc(data.spoken_error)}</p><details><summary>Stale edits</summary>${data.spoken_conflicts.map(entry=>`<div class="log">${esc(entry.text || "")}</div>`).join("")}</details><button class="btn" data-clear-spoken>Discard stale spoken-text edits</button></div></div>` : ""}
     ${data.delivery_error ? `<div class="banner"><div><b>Line emotions need review</b><p>${esc(data.delivery_error)}</p></div></div>` : ""}
-    ${missingTakes.length ? `<div class="banner">${icon("flag")}<div><b>Some emotions use the neutral take.</b> No approved take: ${missingTakes.join(", ")}. A fixed voice takes no instructions, so these lines keep the neutral delivery. <a href="#/characters">Approve emotion takes in Characters</a>.</div></div>` : ""}
-    ${proposed ? `<div class="banner">${icon("wand")}<div><b>${proposed} ${proposed === 1 ? "emotion was" : "emotions were"} proposed by Gemma.</b> Review them in Lines to review: choose another emotion or Keep. Your choices are kept when you analyze again.</div></div>` : ""}
     ${data.voice_error ? `<div class="banner"><div><b>Voice rules need review</b><p>${esc(data.voice_error)}</p><button class="btn" data-clear-voice-conflicts>Review and clear stale line overrides</button></div></div>` : ""}
-    ${unclear ? `<div class="banner">${icon("flag")}<div><b>${unclear} ${unclear === 1 ? "line needs" : "lines need"} a speaker.</b> Click the highlighted Unassigned label and choose a character.</div></div>` : ""}
-    ${(data.blockers || []).length ? `<div class="banner">${icon("flag")}<div><b>${data.blockers.length} ${data.blockers.length === 1 ? "character needs" : "characters need"} approval in this chapter.</b><p>${data.blockers.map((b) => esc(b.label)).join(", ")}</p><div class="row">${data.blockers.map((b) => `<button class="btn" data-review-character="${esc(b.name)}">Review ${esc(b.label)}</button>`).join("")}</div></div></div>` : ""}
-    ${data.report ? `<details class="card" style="padding:14px 18px"><summary><b>Analysis report</b></summary><div class="log" style="margin-top:10px">${esc(data.report)}</div></details>` : ""}
     <div class="card" style="margin-top:16px">
       ${lines.length ? `<div class="context-strip" aria-label="Narrative contexts by scene">${sceneNumbers.map((scene) => `<button type="button" class="btn small" data-scene-context="${scene}" title="Change the narrative context of this scene">Scene ${scene + 1} · ${esc(sceneLabel(scene))}</button>`).join("")}</div>` : ""}
       ${lines.length ? `<div class="row between"><div class="filters" style="margin:0">
           ${[["all", "All text"], ["dialogue", "Dialogue only"], ["review", `Lines to review (${reviewCount})`]].map(([key, label]) =>
-            `<span class="chip ${lineFilter === key ? "on" : ""}" data-lines="${key}">${label}</span>`).join("")}</div>
-          <div class="legend">${speakers.map((s) => `<button type="button" class="chip" data-legend-voice="${esc(s)}" title="Edit character, name tags and reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`).join("")}</div></div>
+            `<button type="button" class="chip ${key === 'review' && lines.length && !data.manual_draft ? reviewCount ? 'warn' : 'ok' : ''} ${lineFilter === key ? "on" : ""}" data-lines="${key}" aria-pressed="${lineFilter === key}">${label}</button>`).join("")}</div>
+          <div class="legend">${speakers.map((s) => {
+            const pending = (data.blockers || []).some(b => b.name === s);
+            return `<button type="button" class="chip ${data.manual_draft ? '' : pending ? 'warn' : 'ok'}" data-legend-voice="${esc(s)}" title="${pending ? 'Character needs approval' : 'Character assigned'} · Edit character, name tags and reading voice for ${esc(s)}"><i class="dot" style="background:${colorFor(s)}"></i>${esc(VoiceRules.label(s, lines))}</button>`;
+          }).join("")}</div></div>
         <div class="script" id="script">${shown.map(({ line, index }, position) => `
           <div class="line ${kind(line)} ${line.joined ? "joined" : position ? "gap" : ""} ${line.speaker === UNASSIGNED ? "unclear" : ""} ${line.omitted ? "omitted" : ""}" data-index="${index}" style="--c:${colorFor(line.speaker)}" ${line.omitted ? 'title="Omitted: the fixed voice identifies the speaker. You can change this in Settings."' : ""}>
             <div>${line.speaker === PAUSE ? "" : `<button class="who ${line.speaker === NARRATOR ? "narrator" : ""}" data-who="${index}" title="Edit character and voice · ${esc(line.speaker)}"><i class="dot" style="background:${colorFor(line.speaker)}"></i>${esc(line.speaker === UNASSIGNED ? "Who is speaking?" : line.display_name || line.speaker)}</button>`}</div>
@@ -505,6 +527,7 @@ async function viewChapter(volume, stem, after = {}) {
               ${line.start != null ? `<button class="btn ghost icon-only" data-variant="${index}" title="Generate another take of this line">${icon("redo")}</button>` : ""}
             </div></div>`).join("")}</div>`
         : `<div class="empty"><p>This chapter has not been analyzed yet.</p><button class="btn primary" id="first-analyze">${icon("wand")} Analyze dialogue</button></div>`}
+      ${lines.length && !shown.length ? `<div class="empty" role="status">${icon('check')} ${lineFilter === 'review' ? 'No unassigned lines. All speakers are assigned.' : 'No dialogue in this chapter.'}</div>` : ''}
     </div>${prompt}${side}`;
 
   const runChapter = (steps, button) => guard(async () => {
@@ -524,7 +547,7 @@ async function viewChapter(volume, stem, after = {}) {
   $("#reanalyze").onclick = (e) => analyze(e.currentTarget);
   $("#first-analyze")?.addEventListener("click", (e) => analyze(e.currentTarget));
   $("#open").onclick = () => guard(() => api("/api/open", { method: "POST", body: { what: "chapter", volume, stem } }));
-  $$("[data-lines]").forEach((element) => element.onclick = () => { lineFilter = element.dataset.lines; viewChapter(volume, stem); });
+  $$("[data-lines]").forEach((element) => element.onclick = () => { lineFilter = element.dataset.lines; viewChapter(volume, stem, { filterFocus: lineFilter }); });
   $$("[data-review-character]").forEach((button) => button.onclick = (event) =>
     guard(() => reviewCharacter(button.dataset.reviewCharacter, volume, stem, data, lines), event.currentTarget));
   $$("[data-scene-context]").forEach((button) => button.onclick = (event) =>
@@ -537,6 +560,7 @@ async function viewChapter(volume, stem, after = {}) {
     viewChapter(volume, stem, next);
   };
   VoiceRules.bindChapter(volume, stem, data);
+  ChapterNotices.bind(view);
   ChapterCast.bind(volume, stem, data);
   SpokenText.bind(volume, stem, data);
   LineAudition.bind(volume, stem, data, (row) => viewChapter(volume, stem, {focus: row}));
@@ -545,7 +569,8 @@ async function viewChapter(volume, stem, after = {}) {
   $$("[data-who]").forEach((button) => button.onclick = (event) => {
     event.stopPropagation();
     const index = +button.dataset.who;
-    if (!data.manual_draft) return guard(() => ChapterCast.editor(lines[index].speaker,volume,stem,data,index),button);
+    if (!data.manual_draft) return guard(() => ChapterCast.editor(lines[index].speaker,volume,stem,data,index,
+      () => viewChapter(volume, stem, lines[index].speaker === UNASSIGNED ? { prompt: index } : { focus: index })),button);
     openMenu(button, data.speakers, lines[index].speaker, (speaker) => guard(() => {
       const next = rows();
       next[index][0] = speaker;
@@ -559,6 +584,19 @@ async function viewChapter(volume, stem, after = {}) {
     target.closest(".line").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
     target.focus({ preventScroll: true, focusVisible: true });
   };
+  $$('[data-unassigned]').forEach(button => button.onclick = () => {
+    const first = nextToResolve(lines, -1);
+    if (first === null) return;
+    lineFilter = 'review';
+    viewChapter(volume, stem, { focus: first });
+  });
+  $$('[data-review-go]').forEach(button => button.onclick = () => {
+    const kind = button.dataset.reviewGo;
+    const index = lines.findIndex(line => kind === 'proposed' ? line.emotion_source === 'ai'
+      : kind === 'missing' ? Boolean(line.emotion_missing)
+      : kind === 'context' ? line.basis === 'context' : Boolean(line.flagged));
+    if (index >= 0) { lineFilter = 'all'; viewChapter(volume, stem, { focus: index }); }
+  });
   $$("[data-queue-go]").forEach((button) => button.onclick = () => goTo(+button.dataset.queueGo));
   const bar = $("#next-prompt");
   if (bar) {
@@ -569,6 +607,7 @@ async function viewChapter(volume, stem, after = {}) {
     (go || $("[data-next-close]", bar)).focus({ preventScroll: true, focusVisible: true });
   }
   if (after.focus != null) goTo(after.focus);
+  if (after.filterFocus) $(`[data-lines="${after.filterFocus}"]`)?.focus({ preventScroll: true });
   $("#pin-head").onclick = (event) => {
     const on = !stickyHeader.get();
     stickyHeader.set(on);
@@ -595,8 +634,8 @@ async function viewChapter(volume, stem, after = {}) {
     player.ontimeupdate = () => {
       const t = player.currentTime;
       $$(".line.playing").forEach((element) => element.classList.remove("playing"));
-      const index = lines.findIndex((l) => l.start != null && t >= l.start && t < l.start + l.seconds + 0.3);
-      if (index >= 0) $(`.line[data-index="${index}"]`)?.classList.add("playing");
+      const index = playbackLine(lines, t);
+      if (index !== null) $(`.line[data-index="${index}"]`)?.classList.add("playing");
     };
   }
   scheduleRefresh(() => { if (!player || player.paused) viewChapter(volume, stem); });
@@ -1138,11 +1177,76 @@ async function flushCharacterSave() {
 }
 
 /* ---------- narrator ---------- */
+/* The optional VoxCPM2 engine: the narrator keeps its fixed voice and each paragraph follows a mood. */
+function voxcpmCard(v, n) {
+  const job = v.job || {};
+  const body = v.installed ? `
+      <label class="field"><span>Narrator reading engine</span><select id="engine">
+        <option value="qwen" ${n.engine !== "voxcpm" ? "selected" : ""}>Qwen: the fixed voice; a mood needs its own approved take</option>
+        <option value="voxcpm" ${n.engine === "voxcpm" ? "selected" : ""}>VoxCPM2: the fixed voice, with a mood for every paragraph</option></select>
+        <small>VoxCPM2 is about twice as slow as Qwen and needs about 8 GB of GPU memory. Changing the engine makes the narrator's passages Outdated. With VoxCPM2 selected, the next analysis also asks Gemma for a mood for each narration paragraph; change any of them beside the paragraph.</small></label>
+      <div class="row"><button class="btn ghost small" id="vox-unlink">Remove the VoxCPM2 link</button></div>`
+    : `<p class="small muted">VoxCPM2 reads the narrator with the fixed voice and follows a mood for each paragraph (tense, tender, ominous, and so on). Setting it up downloads about 8 GB (PyTorch and the model); it can be started again and continues where it stopped.</p>
+      <div class="row"><button class="btn primary" id="vox-install" ${job.running ? "disabled" : ""}>Set up VoxCPM2</button></div>
+      <details class="small"><summary>Already installed somewhere else?</summary><div class="stack narrator-fold-body">
+        <label class="field"><span>python.exe of the VoxCPM2 environment</span><input type="text" id="vox-python" placeholder="C:\...\venv\Scripts\python.exe"></label>
+        <label class="field"><span>Model folder (with model.safetensors)</span><input type="text" id="vox-model" placeholder="C:\...\VoxCPM2"></label>
+        <div class="row"><button class="btn small" id="vox-link">Use this installation</button></div></div></details>`;
+  return `<details class="card narrator-fold" id="narrator-engine" ${job.running || job.error || !v.installed ? "open" : ""}>
+    <summary><h3>VoxCPM2 engine</h3><span class="small muted">${v.installed ? "Installed" : "Not installed"}</span></summary>
+    <div class="stack narrator-fold-body">${body}
+      <div class="small" id="vox-progress" role="status">${voxcpmProgress(job)}</div></div></details>`;
+}
+function voxcpmProgress(job) {
+  if (job.error) return `<b>Setup stopped.</b> <span class="muted">${esc(job.error)}</span>`;
+  if (job.running) return `<b>${esc(job.step)}</b><br><span class="muted">${esc((job.log || []).slice(-1)[0] || "")}</span>`;
+  return "";
+}
+function bindVoxcpmCard(vox, n, data, read, reload) {
+  const card = $("#narrator-engine");
+  $("#engine")?.addEventListener("change", (e) => guard(async () => {
+    read();
+    const select = e.target, value = select.value, before = n.engine;  // guard()'s spinner would empty a select, so none is passed
+    n.engine = value;
+    const result = await api("/api/settings", { method: "PUT", body: { settings: data.settings } })
+      .catch((error) => { n.engine = select.value = before; throw error; });
+    data.settings = { ...result.settings, narrator: Object.assign(n, result.settings.narrator) };
+    toast(n.engine === "voxcpm" ? "The narrator now reads with VoxCPM2." : "The narrator now reads with Qwen.");
+  }));
+  $("#vox-unlink")?.addEventListener("click", async (e) => {
+    if (!await modal("Remove the VoxCPM2 link?", "<p>The narrator goes back to Qwen. The VoxCPM2 files stay on disk.</p>",
+      [{ label: "Cancel", value: false }, { label: "Remove the link", value: true, primary: true }])) return;
+    guard(async () => { await api("/api/voxcpm/unlink", { method: "POST" }); reload(); }, e.currentTarget);
+  });
+  $("#vox-link")?.addEventListener("click", (e) => guard(async () => {
+    await api("/api/voxcpm/link", { method: "POST", body: { python: $("#vox-python").value, model: $("#vox-model").value } });
+    toast("VoxCPM2 is linked.");
+    reload();
+  }, e.currentTarget));
+  let timer = null;
+  const watch = () => {
+    clearInterval(timer);
+    timer = setInterval(async () => {
+      if (!document.body.contains(card)) return clearInterval(timer);
+      const fresh = await api("/api/voxcpm").catch(() => null);
+      if (!fresh) return;
+      $("#vox-progress").innerHTML = voxcpmProgress(fresh.job);
+      if (!fresh.job.running) { clearInterval(timer); if (fresh.installed) { toast("VoxCPM2 is ready."); reload(); } }
+    }, 3000);
+  };
+  $("#vox-install")?.addEventListener("click", (e) => guard(async () => {
+    const result = await api("/api/voxcpm/install", { method: "POST" });
+    e.currentTarget.disabled = true;
+    $("#vox-progress").innerHTML = voxcpmProgress(result.job.running ? result.job : { running: true, step: "Starting", log: [] });
+    watch();
+  }, e.currentTarget));
+  if (vox.job?.running) watch();
+}
 async function viewNarrator() {
-  const [data, allPresets] = await Promise.all([api("/api/settings"), loadPresets()]);
+  const [data, allPresets, vox] = await Promise.all([api("/api/settings"), loadPresets(), api("/api/voxcpm")]);
   const narratorPresets = allPresets.filter((p) => p.kind === "narrator");
   const n = data.settings.narrator;
-  let sample = data.preview_text;
+  const passages = NarratorPassages.create(data.preview_text);
   const draw = () => {
     const isDesign = n.mode === "VoiceDesign";
     const profile = data.profiles[n.profile] && data.profiles[n.profile] === n.description ? n.profile : "__custom";
@@ -1150,18 +1254,19 @@ async function viewNarrator() {
       <div class="page-head"><div><h1>Narrator voice</h1>
         <p>The narrator reads prose and speech tags. Compare takes of the same passage, then <b>fix</b> your favorite. The same reference voice will then be used throughout the book.</p></div>
         <button class="btn primary" id="save">${icon("check")} Save narrator</button></div>
-      ${data.fixed ? `<div class="card fixed-box" style="margin-bottom:16px">
-          <div class="row between"><b>${icon("lock")} Narrator voice is fixed</b>
-            <div class="row"><button class="btn" id="listen-fixed">${icon("play")} Hear it on the preview text</button><button class="btn ghost" id="unfix">Unfix voice</button></div></div>
+      ${data.fixed ? `<details class="card fixed-box narrator-fold" id="narrator-reference">
+          <summary><b>${icon("lock")} Narrator voice is fixed</b><span class="small muted">Approved reference · ${data.fixed.seconds} s</span></summary>
+          <div class="stack narrator-fold-body"><div class="row end"><button class="btn" id="listen-fixed">${icon("play")} Hear it on the preview text</button><button class="btn ghost" id="unfix">Unfix voice</button></div>
           <div class="small muted">This approved reference voice is used throughout the book (${esc(data.fixed.date.slice(0, 10))}, ${data.fixed.seconds} s). The description and directions below are only used to audition a new voice.</div>
           <audio controls src="${esc(data.fixed.url)}" style="width:100%"></audio>
           <div class="takes" id="fixed-takes"></div>
-          ${emotionTakesHtml(data.fixed, data.emotion_samples, data.emotions, n.seed)}</div>`
+          ${emotionTakesHtml(data.fixed, data.emotion_samples, data.emotions, n.seed)}</div></details>`
         : `<div class="banner" style="margin-bottom:16px">${icon("info")}<div><b>No reference voice yet:</b> passages may sound like different narrators. Compare takes and choose <b>“Fix voice”</b> on your favorite. A clear 15–20 second sample is a useful starting point.</div></div>`}
-      <div class="card stack" id="narrator-presets" style="margin-bottom:16px">
-        <div><h3>Ready-made narrator voices</h3><p class="small muted">Listen, then choose one to fix it for the whole book. Or describe your own voice below.</p></div>
-        <div class="presets">${presetRows(narratorPresets, data.fixed?.origin?.preset, "Use as narrator")}</div></div>
-      <div class="grid two">
+      <details class="card narrator-fold" id="narrator-presets">
+        <summary><h3>Ready-made narrator voices</h3></summary><div class="stack narrator-fold-body"><p class="small muted">Listen, then choose one to fix it for the whole book. Or describe your own voice below.</p>
+        <div class="presets">${presetRows(narratorPresets, data.fixed?.origin?.preset, "Use as narrator")}</div></div></details>
+      ${voxcpmCard(vox, n)}
+      <div class="narrator-layout">
         <div class="card stack">
           <div class="seg"><button class="${isDesign ? "on" : ""}" data-mode="VoiceDesign">Describe a voice (VoiceDesign)</button><button class="${isDesign ? "" : "on"}" data-mode="CustomVoice">Built-in speaker (CustomVoice)</button></div>
           ${isDesign ? `
@@ -1169,19 +1274,20 @@ async function viewNarrator() {
             <label class="field"><span>Voice description (English)</span><textarea id="description" rows="5">${esc(n.description)}</textarea><small>Age, gender, timbre, accent and character. Example: “warm, grounded middle-low register”.</small></label>`
           : `<label class="field"><span>Voice</span><select id="speaker">${Object.entries(data.custom_speakers).map(([s, about]) => `<option value="${s}" ${n.speaker === s ? "selected" : ""}>${s} — ${esc(about)}</option>`).join("")}</select><small>Built-in speaker identity. Ryan and Aiden are native English speakers.</small></label>`}
           <label class="field"><span>Delivery directions (English)</span><textarea id="instructions" rows="4">${esc(n.instructions)}</textarea><small>Pacing, emotion and emphasis. Example: “measured but flowing, understated”.</small></label>
-          <div class="two-cols">
+        </div>
+        <div class="card stack">
+          <div class="two-cols narrator-variation">
             <label class="field"><span>Variation number (seed)</span><input type="number" id="seed" value="${n.seed}"><small>A different number gives a different take. It is not a quality score.</small></label>
             <label class="field"><span>Performance variation: <b id="temp-value">${n.temperature}</b></span><input type="range" id="temperature" min="0.3" max="1.2" step="0.05" value="${n.temperature}"><small>Lower values usually give more predictable delivery. Fix a reference voice to preserve identity.</small></label>
           </div>
-        </div>
-        <div class="card stack">
           <h3>Audition the same passage</h3>
-          <label class="field"><span>Preview text</span><textarea id="sample" rows="5">${esc(sample)}</textarea><small>Paste a passage containing prose and dialogue.</small></label>
+          ${passages.html()}
           <div class="row"><button class="btn primary" id="listen">${icon("play")} Listen</button><button class="btn" id="compare">${icon("dice")} Compare 3 takes</button></div>
           <div class="takes" id="takes"></div>
           <div class="banner info small">${icon("info")}<div>Changing a reference voice makes the affected chapters Outdated. Only the narrator's changed passages need regeneration.</div></div>
         </div>
       </div>`;
+    passages.bind(view);
     $$("#narrator-presets [data-preset]").forEach((b) => b.onclick = () => guard(async () => {
       if (data.fixed && !await modal("Replace the narrator voice?", "<p>The new voice is used for all narration. Generated chapters become Outdated and only the narrator's passages are regenerated.</p>",
         [{ label: "Cancel", value: false }, { label: "Use this voice", value: true, primary: true }])) return;
@@ -1195,7 +1301,7 @@ async function viewNarrator() {
     $("#save").onclick = (e) => guard(async () => { read(); const result = await api("/api/settings", { method: "PUT", body: { settings: data.settings } }); data.settings = result.settings; toast("Narrator saved"); }, e.currentTarget);
     const takes = (seeds, button) => guard(async () => {
       read();
-      const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: sample, seeds } });
+      const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: passages.text(), seeds } });
       $("#takes").innerHTML = result.takes.map((t) => `<div class="take"><b>Take ${t.seed}</b><audio controls src="${t.url}"></audio>
         <button class="btn primary" data-fix="${esc(t.path)}" data-seed="${t.seed}">${icon("lock")} Fix voice</button></div>`).join("");
       $$("[data-fix]").forEach((b) => b.onclick = () => guard(async () => {
@@ -1209,9 +1315,10 @@ async function viewNarrator() {
     }, button);
     $("#listen-fixed")?.addEventListener("click", (e) => guard(async () => {
       read();
-      const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: sample, fixed: true } });
+      const result = await api("/api/narrator/preview", { method: "POST", body: { narrator: n, text: passages.text(), fixed: true } });
       $("#fixed-takes").innerHTML = `<div class="take"><b>Fixed voice</b><audio controls autoplay src="${result.takes[0].url}"></audio><span></span></div>`;
     }, e.currentTarget));
+    bindVoxcpmCard(vox, n, data, read, viewNarrator);
     if (data.fixed) bindEmotionTakes($(".fixed-box"), "Narrator", ({fixed}) => { data.fixed = fixed; });
     $("#unfix")?.addEventListener("click", async () => {
       if (!await modal("Unfix the narrator voice?", "<p>The narrator will use the description again and may vary between passages. Generated chapters will become Outdated.</p>",
@@ -1227,7 +1334,7 @@ async function viewNarrator() {
     if ($("#instructions")) n.instructions = $("#instructions").value;
     if ($("#seed")) n.seed = +$("#seed").value;
     if ($("#temperature")) n.temperature = +$("#temperature").value;
-    if ($("#sample")) sample = $("#sample").value;
+    if ($("#sample")) passages.save($("#sample").value);
   };
   draw();
 }
@@ -1251,6 +1358,9 @@ async function viewSettings() {
         <div><span class="small muted">Quality</span><br><div class="seg" id="quality"><button data-q="standard" class="${s.export_quality === "standard" ? "on" : ""}">Standard · 64 kbps</button><button data-q="high" class="${s.export_quality === "high" ? "on" : ""}">High · 96 kbps</button></div></div>
         <label class="field"><span>Whole-volume format</span><select id="volume-format">${Object.entries(data.formats.volume).map(([key, label]) => `<option value="${key}" ${s.volume_format === key ? "selected" : ""}>${esc(label)}</option>`).join("")}</select><small>M4B preserves chapter markers for compatible audiobook players.</small></label>
         <label class="field"><span>Author (file metadata)</span><input type="text" id="author" value="${esc(s.author)}"></label>
+        <label class="field"><span>Cover image (JPG or PNG)</span><input type="text" id="cover" value="${esc(s.cover)}" placeholder="Leave empty to use cover.jpg or cover.png from the chapter folder"><small>Added to MP3, M4A, M4B and FLAC files, scaled to 1400 pixels at most.</small></label>
+        <label class="switch"><input type="checkbox" id="level-passages" ${s.level_passages !== false ? "checked" : ""}><div><b>Match the level of passages</b><div class="small muted">While a chapter is assembled, a passage much louder or quieter than the rest is moved closer to the chapter's usual level, and its edges fade a few milliseconds. The generated passages are not changed.</div></div></label>
+        <label class="switch"><input type="checkbox" id="loudness" ${s.loudness !== false ? "checked" : ""}><div><b>Even out the loudness</b><div class="small muted">Every exported chapter and volume gets the same comfortable level. WAV is left as it is.</div></div></label>
       </details>
       <details class="card stack settings-section" id="video-settings" open><summary><h3>${icon("video")} Video</h3></summary>
         <label class="switch"><input type="checkbox" id="video-enabled" ${v.enabled ? "checked" : ""}><div><b>Also create an MP4 video</b><div class="small muted">Run automatically creates videos after audio export. Off by default; manual video creation is always available.</div></div></label>
@@ -1267,8 +1377,10 @@ async function viewSettings() {
       </details>
     </div>
     <details class="card stack settings-section" open style="margin-top:18px"><summary><h3>${icon("book")} Reading</h3></summary>
-      <label class="switch"><input type="checkbox" id="multi" ${s.multi_voice ? "checked" : ""}><div><b>Separate character voices</b><div class="small muted">Off: the narrator reads everything, including dialogue.</div></div></label>
+      <label class="switch"><input type="checkbox" id="multi" ${s.multi_voice ? "checked" : ""}><div><b>Separate character voices</b><div class="small muted">Off: the narrator reads everything and joins dialogue to its speech tag where they share a sentence. Characters are still identified by Gemma and named in video.</div></div></label>
       <label class="switch"><input type="checkbox" id="announce" ${s.announce_titles ? "checked" : ""}><div><b>Announce chapter titles</b><div class="small muted">For example: Chapter 1. Arrival. followed by a pause.</div></div></label>
+      <label class="switch"><input type="checkbox" id="retry-pace" ${s.retry_pace !== false ? "checked" : ""}><div><b>Retry passages that sound too fast or too slow</b><div class="small muted">When a passage is read at a speed far outside normal narration (often a skipped phrase or a long hesitation), up to two more takes are made and the best one is kept. Costs time only for those passages.</div></div></label>
+      <label class="switch"><input type="checkbox" id="spell-out" ${s.spell_out ? "checked" : ""}><div><b>Spell out numbers and titles</b><div class="small muted">Numbers, years, money, times and titles such as Dr. are read in words (1998 as nineteen ninety-eight). Passages that contain them are generated again when you change this; your text is not changed.</div></div></label>
       <label class="switch"><input type="checkbox" id="tags" ${s.speech_tags !== "all" ? "checked" : ""}><div><b>Omit simple speech tags for fixed voices</b><div class="small muted">A simple tag such as Alex said is omitted when Alex has a fixed voice. Informative tags such as she whispered and tags for voices without references are kept.</div></div></label>
       <label class="field"><span>Pause between speakers: <b id="pause-value">${s.dialogue_pause}</b> s</span><input type="range" id="pause" min="0.2" max="1.5" step="0.05" value="${s.dialogue_pause}">
         <small>Actual silence between speakers. Tag-to-dialogue: 0.25 s; paragraphs: 0.6 s; scene changes: 1.2 s.</small></label>
@@ -1291,8 +1403,13 @@ async function viewSettings() {
     s.export_quality = $("#quality .on").dataset.q;
     s.volume_format = $("#volume-format").value;
     s.author = $("#author").value;
+    s.cover = $("#cover").value.trim();
+    s.loudness = $("#loudness").checked;
     s.multi_voice = $("#multi").checked;
     s.announce_titles = $("#announce").checked;
+    s.spell_out = $("#spell-out").checked;
+    s.retry_pace = $("#retry-pace").checked;
+    s.level_passages = $("#level-passages").checked;
     s.speech_tags = $("#tags").checked ? "omit_fixed" : "all";
     s.dialogue_pause = +$("#pause").value;
     s.unclear_policy = $("input[name=policy]:checked").value;

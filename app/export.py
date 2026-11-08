@@ -1,6 +1,9 @@
 """Encode chapters and whole volumes with ffmpeg: speech-friendly, fast settings, tags and chapter marks."""
+import json
+import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -26,6 +29,10 @@ VOLUME_FORMATS = {"m4b": {"label": "M4B — audiobook with chapter markers", "ex
                           "standard": FORMATS["m4a"]["standard"], "high": FORMATS["m4a"]["high"]},
                   **{key: value for key, value in FORMATS.items() if key in ("mp3", "m4a", "ogg", "opus", "flac")}}
 GAP_BETWEEN_CHAPTERS = 2.0
+LOUDNESS = {"I": -19.0, "TP": -2.0, "LRA": 11.0}  # integrated LUFS: audiobook speech, clear and not too quiet
+COVER_FORMATS = ("mp3", "m4a", "m4b", "flac")     # containers that carry a picture without extra work
+COVER_NAMES = ("cover.jpg", "cover.jpeg", "cover.png")
+COVER_SIDE = 1400                                 # pixels; larger pictures only bloat every file
 
 
 def ffmpeg():
@@ -41,6 +48,62 @@ def _run(arguments):
                             creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         raise RuntimeError("FFmpeg failed: " + result.stderr.strip()[-600:])
+
+
+def _loudnorm(measured=None):
+    """The loudnorm filter at the audiobook target. With a measurement it is linear (one gain, no pumping)."""
+    parts = f"I={LOUDNESS['I']}:TP={LOUDNESS['TP']}:LRA={LOUDNESS['LRA']}"
+    if measured:
+        parts += (f":measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+                  f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+                  f":offset={measured['target_offset']}:linear=true")
+    return "loudnorm=" + parts
+
+
+def _measure(input_arguments):
+    """Loudness of the audio as ffmpeg measures it, or None when it cannot be measured (then one pass is used)."""
+    result = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel", "info", *input_arguments, "-vn",
+                             "-af", _loudnorm() + ":print_format=json", "-f", "null", "-"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+    block = re.findall(r"\{[^{}]*\}", result.stderr)
+    try:
+        values = json.loads(block[-1])
+        if all(values.get(key) not in (None, "-inf", "inf") for key in ("input_i", "input_tp", "input_lra", "input_thresh",
+                                                                         "target_offset")):
+            return values
+    except (IndexError, ValueError):
+        pass
+    return None
+
+
+def _audio_filter(settings, extension, input_arguments):
+    """Even out the loudness of every export, except WAV that is meant for editing. Opus is 48 kHz, the rest 24 kHz."""
+    if not settings.get("loudness", True) or extension == "wav":
+        return []
+    rate = 48000 if extension == "opus" else 24000
+    return ["-af", f"{_loudnorm(_measure(input_arguments))},aresample={rate}"]
+
+
+def find_cover(settings, folder=None):
+    """The cover picture: the file named in the settings, else cover.jpg/.jpeg/.png in the chapter folder."""
+    chosen = str(settings.get("cover", "")).strip().strip('"')
+    if chosen:
+        path = Path(chosen)
+        return path if path.is_file() and path.suffix.lower() in (".jpg", ".jpeg", ".png") else None
+    if folder:
+        for name in COVER_NAMES:
+            if (Path(folder) / name).is_file():
+                return Path(folder) / name
+    return None
+
+
+def _cover_arguments(cover, extension, picture_input):
+    """Map the picture as an attached cover, re-encoded to a plain JPEG of sensible size."""
+    if not cover or extension not in COVER_FORMATS:
+        return []
+    return ["-map", f"{picture_input}:v", "-c:v", "mjpeg", "-q:v", "3", "-pix_fmt", "yuvj420p",
+            "-vf", f"scale='min({COVER_SIDE},iw)':-2", "-disposition:v:0", "attached_pic"]
 
 
 def _tags(settings, title, album, track=None):
@@ -66,8 +129,13 @@ def export_chapter(chapter, settings):
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.stem + ".tmp." + spec["ext"])
     title = f"{chapter.number} - {chapter.title}" if chapter.number is not None else chapter.title
-    _run(["-i", str(chapter.audio_file), *_tags(settings, title, chapter.volume, chapter.number),
-          *_codec(spec, settings["export_quality"], spec["ext"]), str(temporary)])
+    source = ["-i", str(chapter.audio_file)]
+    cover = find_cover(settings, project.get_volume(chapter.volume)["source"])
+    pictured = ["-i", str(cover)] if cover and spec["ext"] in COVER_FORMATS else []
+    _run([*source, *pictured, "-map", "0:a", *_cover_arguments(cover, spec["ext"], 1),
+          *_tags(settings, title, chapter.volume, chapter.number),
+          *_audio_filter(settings, spec["ext"], source), *_codec(spec, settings["export_quality"], spec["ext"]),
+          str(temporary)])
     _replace(temporary, target)
     return target
 
@@ -115,10 +183,13 @@ def export_volume(volume, settings, progress=lambda message: None):
     progress(f"Encoding the volume ({len(chapters)} chapters, {position / 3600:.1f} hours)")
     temporary = target.with_name(target.stem + ".tmp." + spec["ext"])
     extra = ["-f", "mp4"] if spec["ext"] == "m4b" else []
-    _run(["-f", "concat", "-safe", "0", "-i", str(work / "_concat.txt"), "-i", str(work / "_chapters.txt"),
-          "-map", "0:a", "-map_metadata", "1", "-map_chapters", "1",
-          *_tags(settings, volume, volume), *_codec(spec, settings["export_quality"], spec["ext"]),
-          *extra, str(temporary)])
+    source = ["-f", "concat", "-safe", "0", "-i", str(work / "_concat.txt")]
+    cover = find_cover(settings, project.get_volume(volume)["source"])
+    pictured = ["-i", str(cover)] if cover and spec["ext"] in COVER_FORMATS else []
+    _run([*source, "-i", str(work / "_chapters.txt"), *pictured,
+          "-map", "0:a", *_cover_arguments(cover, spec["ext"], 2), "-map_metadata", "1", "-map_chapters", "1",
+          *_tags(settings, volume, volume), *_audio_filter(settings, spec["ext"], source),
+          *_codec(spec, settings["export_quality"], spec["ext"]), *extra, str(temporary)])
     _replace(temporary, target)
     return target, len(chapters), position
 
